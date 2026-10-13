@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iwt"
+version = "0.1.0"
+description = "Integrated borehole and surface seismic well tie (Lewis et al., 2016, 78th EAGE) in Python"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21", "scipy>=1.7"]
+keywords = ["geophysics", "VSP", "well tie", "anisotropy", "VTI", "attenuation", "AVO"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
+las = ["lasio>=0.30"]
+all = ["matplotlib>=3.5", "lasio>=0.30"]
+dev = ["pytest>=7", "pyflakes>=2.4", "matplotlib>=3.5", "lasio>=0.30"]
+
+[tool.setuptools]
+packages = ["iwt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

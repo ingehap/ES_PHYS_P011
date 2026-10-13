@@ -1,0 +1,48 @@
+"""iwt: integrated borehole and surface seismic well tie.
+
+A Python implementation of the workflow of Lewis et al. (2016), "Integrated
+processing of borehole and surface seismic measurements for enhanced well tie and
+AVO analysis", 78th EAGE Conference & Exhibition,
+https://doi.org/10.3997/2214-4609.201601553, and of the methods of its references.
+See ``docs/IMPLEMENTATION_PLAN.md`` for the roadmap.
+
+Work package 1 (this release) provides the foundations: the published numbers
+(:mod:`iwt.paper`), the 1D elastic VTI model with attenuation
+(:mod:`iwt.model`), constant-Q dispersion (:mod:`iwt.qmodel`), Gassmann fluid
+substitution (:mod:`iwt.rockphysics`) and a synthetic Wisting-like well
+(:mod:`iwt.synthetic`).  Plotting (:mod:`iwt.plotting`) needs matplotlib.
+"""
+
+from . import paper, qmodel, rockphysics
+from .model import (
+    ElasticModel1D,
+    Stiffness,
+    backus_average,
+    cij_to_thomsen,
+    delta_min,
+    is_stable,
+    phase_velocities,
+    thomsen_to_cij,
+)
+from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
+
+__version__ = "0.1.0"
+
+__all__ = [
+    "paper",
+    "qmodel",
+    "rockphysics",
+    "ElasticModel1D",
+    "Stiffness",
+    "backus_average",
+    "cij_to_thomsen",
+    "delta_min",
+    "is_stable",
+    "phase_velocities",
+    "thomsen_to_cij",
+    "WellLogs",
+    "synthetic_logs",
+    "wisting_like_model",
+    "wisting_like_well",
+    "__version__",
+]

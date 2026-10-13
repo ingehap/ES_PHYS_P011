@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **plan only, nothing implemented yet.** This document says what will be built, in what
+Status: **WP1 implemented** (see the README); WP2–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -139,7 +139,7 @@ tests/                        pytest; analytic and round-trip checks (section 5)
 Each package is one PR, as in `ES_PHYS_P010`. Every PR ships with tests and a README section and
 leaves the earlier results bit-identical.
 
-### WP1: Foundations
+### WP1: Foundations (done)
 
 **Builds** `paper.py`, `model.py`, `synthetic.py` (true model plus logs), `pyproject.toml`, the
 README skeleton and a GitHub Actions workflow running `pytest` and `pyflakes`. The CI workflow
@@ -159,8 +159,9 @@ is an improvement over `ES_PHYS_P010`, which has none.
 
 - Thomsen ↔ Cij round trip;
 - stiffness positive-definite;
-- Backus averaging of isotropic layers gives γ ≥ 0 and ε ≥ 0 (horizontal velocity at least the
-  vertical);
+- Backus averaging of isotropic layers gives γ ≥ 0 and ε ≥ δ (η ≥ 0). ε itself can be
+  negative (Berryman et al., 1999). The first version of this plan wrongly said ε ≥ 0; the
+  WP1 test suite found the counter-examples;
 - Backus of identical layers is the identity.
 
 ### WP2: Forward modelling
@@ -441,6 +442,7 @@ All DOIs were checked against the Scite index on 2026-10-13, except where noted.
 * Alkhalifah, T., & Tsvankin, I. (1995). Velocity analysis for transversely isotropic media. *Geophysics*, 60(5), 1550–1566. https://doi.org/10.1190/1.1443888
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
 * Banik, N. C., Lerche, I., & Shuey, R. T. (1985). Stratigraphic filtering, Part I: Derivation of the O'Doherty–Anstey formula. *Geophysics*, 50(12), 2768–2774. https://doi.org/10.1190/1.1441897
+* Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gaiser, J. E. (1990). Transversely isotropic phase velocity analysis from slowness estimates. *Journal of Geophysical Research*, 95(B7), 11241–11254. https://doi.org/10.1029/JB095iB07p11241
 * Grechka, V., Tsvankin, I., & Contreras, P. (2019). Inversion of walkaway VSP data in the presence of lateral velocity heterogeneity. arXiv:1901.02916. https://doi.org/10.48550/arXiv.1901.02916 (arXiv posting; the journal version has not been checked)
