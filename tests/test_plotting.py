@@ -51,3 +51,21 @@ def test_wp2_figures_render():
     import matplotlib.pyplot as plt
 
     plt.close("all")
+
+
+def test_wp3_figures_render():
+    from iwt.plotting import depth_profiles, trace_columns
+
+    z = np.linspace(450.0, 1650.0, 50)
+    fig = depth_profiles({"drift": ("ms", {"a": (z * 0.01, z), "b": (z * 0.02, z)}),
+                          "Q": ("1/Q", {"c": (np.ones_like(z), z)})},
+                         top=400.0, bottom=1700.0, tops=[(600.0, "unit")], title="d")
+    assert len(fig.axes) == 2
+    t = np.arange(200) * 0.002
+    tr = np.sin(30 * t)
+    fig2 = trace_columns(t, {"one": (tr, 1.0), "two": (0.5 * tr, 1.0), "three": (tr, 2.0)},
+                         tmin=0.1, tmax=0.3, marks={"m": 0.2}, title="c")
+    assert len(fig2.axes) == 3
+    import matplotlib.pyplot as plt
+
+    plt.close("all")

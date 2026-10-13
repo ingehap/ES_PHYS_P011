@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1 and WP2 implemented** (see the README); WP3–WP8 to do. This document says what will be built, in what
+Status: **WP1, WP2 and WP3 implemented** (see the README); WP4–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -187,7 +187,20 @@ fast and free of grid dispersion. It can also switch internal multiples on and o
 - source–receiver reciprocity holds;
 - a reflectivity seismogram matches FD in a small model (if `fd2d` is built).
 
-### WP3: ZO-VSP processing, Q and the sonic calibration
+### WP3: ZO-VSP processing, Q and the sonic calibration (done)
+
+*As built:* `iwt.vsp.zovsp`, `iwt.vsp.attenuation` and `iwt.calibration`. Changes from the plan:
+
+- wavefield separation is parametric by default (Seeman & Horowicz, 1983), with the median
+  filter kept as an option;
+- traveltimes are also measured as phase delays at the seismic frequency, on the separated
+  downgoing wavefield;
+- interval Q comes from non-negative block least squares with an intercept for the reference
+  trace, not from a regularized inversion;
+- the stratigraphic t* comes from an elastic synthetic of the 0.5 m *log* model, processed with
+  the same windows, band and estimator as the data.
+
+The "measured" ZO-VSP is a vertical-incidence plane-wave synthetic (README, assumption 10).
 
 **Builds:**
 
@@ -213,7 +226,10 @@ counts them twice.
 **Improvement: separate intrinsic from stratigraphic attenuation.** The apparent VSP Q also
 contains short-path multiple ("stratigraphic") filtering (O'Doherty & Anstey, 1971; Banik et al.,
 1985). The 0.5 m log model predicts that part by reflectivity, so intrinsic Q can be estimated as
-1/Q_int = 1/Q_app − 1/Q_strat.
+1/Q_int = 1/Q_app − 1/Q_strat. *As built:* stratigraphic attenuation is not constant-Q, so its
+size depends on the band and the estimator. Q_app and Q_strat must therefore come from the same
+windows, band and estimator, and only Q_int may be used for dispersion. The layering's velocity
+effect is the Backus term, and using Q_app for the dispersion as well counts it twice.
 
 **Checks:**
 
