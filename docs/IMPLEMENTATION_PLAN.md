@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1 implemented** (see the README); WP2–WP8 to do. This document says what will be built, in what
+Status: **WP1 and WP2 implemented** (see the README); WP3–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -126,7 +126,7 @@ iwt/
                     phase Q-compensation and a gain limit (Cavalca et al. 2013; Wang 2006)
   avo.py            AVA extraction, intercept/gradient fits, Vs scenarios, sensitivity (Jacobian)
   welltie.py        wavelet estimation (Walden & White 1998), correlation, time shift, phase
-  multiples.py      interbed-multiple contamination: full minus primaries-only reflectivity
+  multiples.py      interbed-multiple contamination: full minus Born (single-scattering) primaries
   workflow.py       the integrated loop: model -> predict -> misfit per domain -> discrepancy register
   io.py, cli.py     LAS (lasio), SEG-Y (segyio), CSV; `iwt` command
   plotting.py       figure analogues
@@ -164,7 +164,12 @@ is an improvement over `ES_PHYS_P010`, which has none.
   WP1 test suite found the counter-examples;
 - Backus of identical layers is the identity.
 
-### WP2: Forward modelling
+### WP2: Forward modelling (done)
+
+*As built:* the reflectivity method only (open decision 2 default; no 2D FD). It uses
+closed-form interface coefficients from the symplectic identity DᵀJD = [[0, N], [−N, 0]], and
+adds a `transmission_loss=False` (Born primaries) switch. The README lists the validation
+results.
 
 **Builds** convolutional synthetics with AVO approximations, and the reflectivity method
 (isotropic first, then VTI) with constant Q.
@@ -305,7 +310,12 @@ reservoir AVA gradient against the elastic synthetic, scored numerically.
 
 - the `workflow.py` loop;
 - well-tie metrics (Fig. 2);
-- interbed-multiple contamination from the full minus the primaries-only reflectivity;
+- interbed-multiple contamination from the full response minus the **Born** (single-scattering)
+  primaries. WP2 showed that "full minus primaries-with-transmission-loss" mostly measures how
+  short-period multiples compensate transmission loss (O'Doherty & Anstey, 1971). On the
+  synthetic well, two-way transmission through 509 fine layers is 0.25, while the full response
+  is 0.89 × Born. Compare in the angle or migrated domain, because raw gathers mix in the seabed
+  reflection at moderate offsets;
 - Vs scenarios at Stø and Fruholmen (Fig. 4);
 - a 2D convolutional section with a flat oil–water contact under a dipping reservoir, comparing
   imaging with and without anisotropy and Q (Fig. 5 analogue);

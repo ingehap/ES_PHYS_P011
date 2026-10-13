@@ -16,9 +16,9 @@ and of the methods of its three references:
 The roadmap, assumptions, critical assessment and full reference list are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-**Status:** work package 1 (foundations) is implemented. WP2–WP8 (forward modelling, VSP
-processing, sonic and walkaway anisotropy, Q-compensated imaging, the integrated loop, real-data
-I/O) are still to do.
+**Status:** work packages 1 (foundations) and 2 (forward modelling) are implemented. WP3–WP8
+(VSP processing and Q, sonic and walkaway anisotropy, Q-compensated imaging, the integrated loop,
+real-data I/O) are still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -66,6 +66,21 @@ seismic_scale = model.backus(10.0, respect=[417.5])   # running Backus average, 
 vp, vsv, vsh = iwt.phase_velocities(np.radians(30.0), 2400.0, 950.0, 0.20, 0.08, 0.24)  # exact VTI
 
 logs.las_curves()                          # DEPT (m RKB), TVDSS, DTCO, DTSM (us/ft), RHOB (g/cm3)
+
+# forward modelling (WP2)
+from iwt.modeling import reflection
+from iwt.modeling.convolution import ricker, angle_gather, normal_incidence
+from iwt.modeling.reflectivity import Reflectivity
+
+theta = np.radians([0.0, 20.0, 40.0])
+upper, lower = (2815.0, 1306.0, 2454.0, 0.138, 0.038), (2911.0, 1656.0, 2164.0, 0.023, 0.009)
+reflection.exact_pp(theta, upper, lower)   # exact VTI PP coefficient (also: zoeppritz_pp, ruger, ...)
+
+wav = ricker(30.0, 0.002)
+t, ang, gather = angle_gather(model, [0, 10, 20, 30], 0.002, 600, wav, method="exact_vti")
+refl = Reflectivity(model.subset(0.0, 1000.0), attenuation=True, free_surface=False)
+rec = refl.record([100.0, 500.0], 6.0, [8.0], 0.002, 600, wav, "pressure", f_max=90.0, workers=4)
+rec.data                                   # [receiver, offset, time]
 ```
 
 ## What WP1 provides
@@ -83,6 +98,26 @@ logs.las_curves()                          # DEPT (m RKB), TVDSS, DTCO, DTSM (us
 | Gassmann fluid substitution | `iwt.rockphysics` | derives the Stø oil leg from its water leg |
 | synthetic Wisting-like well and logs | `iwt.synthetic` | see below |
 | figures | `iwt.plotting`, `examples/wp1_synthetic_well.py` | `docs/figures/wp1_*.png` |
+
+## What WP2 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| exact plane-wave physics of VTI layers | `iwt.modeling.elastic` | constant-Q complex velocities (Kjartansson, 1979); vertical slownesses and eigenvectors; solid–solid and fluid–solid interface scattering |
+| exact and approximate PP coefficients | `iwt.modeling.reflection` | `zoeppritz_pp` (Aki & Richards explicit form), `exact_pp` (VTI, from eigenvectors), `aki_richards`, `shuey` (1985), `ruger` (1997) |
+| convolutional synthetics | `iwt.modeling.convolution` | `ricker`; `normal_incidence` (exact primaries, optional transmission loss and Q); `angle_gather` (one R(θ) per interface at vertical TWT) |
+| reflectivity method | `iwt.modeling.reflectivity.Reflectivity` | Kennett recursion (Kennett & Kerry, 1979; VTI after Fryer & Frazer, 1984); switches for attenuation, free surface, internal multiples, converted waves and transmission loss (Born primaries); hydrophone and 3C receivers in the sea or in the borehole; point-source records by the Sommerfeld integral |
+| figures | `iwt.plotting.avo_display`, `gather_panels`; `examples/wp2_forward_modelling.py` | `docs/figures/wp2_*.png` |
+
+**Engine choice: the reflectivity method instead of the article's elastic finite differences.**
+The default for open decision 2 is taken. For a 1D model the reflectivity method is exact, free
+of grid dispersion, and handles every 0.5 m layer and Q directly. It can also switch multiples
+off, which the multiple analysis needs. No 2D FD code was built.
+
+**Speed.** The interface coefficients use a closed form: the elastic eigenvector matrix satisfies
+DᵀJD = [[0, N], [−N, 0]], so D⁻¹ needs no general solve. All 2×2 algebra is element-wise. The
+2524-layer model to 1000 m takes about 75 s per streamer gather (39 offsets, 108 frequencies,
+about 1400 slownesses) with `workers=4`.
 
 ## The synthetic well
 
@@ -189,6 +224,71 @@ calibration (WP5). The article does not mention this step.
 
 ![Intrinsic and layer-induced anisotropy](docs/figures/wp1_backus.png)
 
+## WP2 results (synthetic well; `python examples/wp2_forward_modelling.py`)
+
+**Validation.** The two independent PP-coefficient codes agree. The explicit Aki & Richards
+Zoeppritz formula and the eigenvector solution differ by less than 10⁻¹⁵ from 0 to 60°.
+
+At normal incidence the reflectivity method equals the convolution synthetic to 2·10⁻¹⁴ on all
+2524 layers. This holds with transmission loss and Q, for primaries only and no free surface.
+
+The point-source integration was checked three ways:
+
+- **Direct wave:** it matches the analytic e^{ikR}/R pressure to 10⁻⁴.
+- **Seabed reflection:** it matches the image-source wave scaled by R(θ) to 2 %.
+- **Vertical attenuation:** it matches `iwt.qmodel` to 10⁻¹⁰.
+
+Interface scattering conserves energy and is reciprocal. 67 tests in all.
+
+**AVO at the reservoir.** Unit Backus averages, with R at 0 / 20 / 40°:
+
+| Interface | exact isotropic | exact VTI | Rüger | Aki–Richards |
+|---|---|---|---|---|
+| top Stø (Δε = −0.116, Δδ = −0.029) | −0.046 / −0.064 / −0.110 | −0.046 / −0.068 / −0.132 | −0.046 / −0.068 / −0.134 | −0.046 / −0.065 / −0.111 |
+| top Fruholmen (Δε = −0.034, Δδ = −0.009) | +0.096 / +0.075 / +0.048 | +0.096 / +0.074 / +0.044 | +0.096 / +0.074 / +0.032 | +0.096 / +0.075 / +0.039 |
+
+- **Anisotropy matters at top Stø.** The anisotropic Fuglen shale over an almost isotropic sand
+  makes the far-angle amplitude 20 % stronger than isotropic modelling predicts: R(40°) is −0.132
+  against −0.110. This is the effect the article needed VTI for.
+- **Rüger is reliable to about 30°** (error ≤ 0.002). Near the critical angle it fails: at top
+  Fruholmen at 40° it reads 0.032 against an exact 0.044. Use the exact coefficient for far
+  angles.
+
+![AVO](docs/figures/wp2_avo.png)
+
+**Transmission loss and short-period multiples.** At normal incidence the two-way transmission
+product through the 509 fine-layer interfaces above top Stø is only 0.25. Yet the full response
+in the reservoir window has 0.89 times the amplitude of the Born (single-scattering, no
+transmission loss) primaries. Short-period multiples restore most of the loss, as O'Doherty &
+Anstey (1971) described.
+
+Consequence for WP7: "full minus primaries-with-transmission-loss" mostly measures this
+compensation. Interbed multiples are better isolated against Born primaries. The plan has been
+corrected.
+
+**Multiples in the reservoir window.** Streamer gathers, Q on, no free surface, top Stø to top
+Fruholmen window, offsets 100–600 m:
+
+- RMS(full − Born) / RMS(Born) = 0.33;
+- there is no measurable time shift at 2 ms sampling.
+
+The Quaternary and Lower Cretaceous reverberations and the calcite stringers produce this
+contamination. It is the effect the article reports. At larger offsets the seabed reflection, with
+its large water moveout, crosses the reservoir window in raw gathers. Quantifying the
+contamination there needs moveout-corrected or migrated gathers (WP6/WP7).
+
+![Multiples](docs/figures/wp2_multiples.png)
+
+**Zero-offset VSP.** The source is 50 m from the well, with receivers at 450–900 m. The
+first-arrival peak comes 4–7 ms (median 5.6 ms) after the straight vertical traveltime at 30 Hz.
+
+Most of that delay comes from Q (a causal, attenuated pulse peaks late), with smaller
+contributions from the offset geometry and stratigraphic filtering. It adds to the dispersion
+drift of WP1. The pick convention (onset, peak or zero crossing) therefore matters at the
+millisecond level, which WP3 will address.
+
+![ZO-VSP](docs/figures/wp2_zovsp.png)
+
 ## Assumptions
 
 1. **"LFP article" means Lewis et al. (2016)**, the only article in [`References/`](References/).
@@ -208,9 +308,24 @@ calibration (WP5). The article does not mention this step.
    about a third of the wavelength at 2300 m/s and 80 Hz.
 7. **Gassmann assumes** an isotropic, connected pore space at low frequency. Applying it to the
    reservoir sand only is a simplification.
+8. **Anisotropic attenuation uses one Q per wave type** (WP2). The P-wave Q acts on C33 and C11,
+   and the S-wave Q on C44. This is the simplest choice; direction-dependent Q is not modelled.
+9. **The source is an explosion in the sea and the medium is laterally homogeneous** (WP2).
+   - Records are cylindrically symmetric.
+   - Waves evanescent in the sea are omitted (take-off angles to 88°).
+   - The direct wave in the sea is therefore approximate at near-grazing angles, and a receiver
+     at the source point is singular.
+   - The PP coefficients of the linearized formulas use the incidence angle in place of the
+     mean of incidence and transmission angles.
 
 ## Notes found while implementing
 
+- **The plan defined interbed multiples as "full minus primaries-only" (WP7). That is misleading
+  in finely layered media.** The primaries keep transmission losses that short-period multiples
+  largely restore. WP2 therefore adds Born primaries (`transmission_loss=False`) as the reference,
+  and the plan is corrected.
+- **The Rüger (1997) approximation is accurate to about 30°** on this well, but not near the
+  critical angle at top Fruholmen (WP2).
 - **The plan's WP1 check "Backus averaging of isotropic layers gives ε ≥ 0" was wrong.** The test
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
@@ -225,9 +340,15 @@ iwt/
   qmodel.py       constant-Q (Kjartansson) dispersion and attenuation
   rockphysics.py  Gassmann fluid substitution, Reuss fluid mixing
   synthetic.py    the Wisting-like true model and its wireline logs
-  plotting.py     well and anisotropy displays (matplotlib)
-examples/wp1_synthetic_well.py   prints the WP1 numbers and writes docs/figures/wp1_*.png
-tests/            pytest suite (44 tests)
+  plotting.py     well, anisotropy, AVO and gather displays (matplotlib)
+  modeling/
+    elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
+    reflection.py    exact (isotropic, VTI) and approximate PP reflection coefficients
+    convolution.py   wavelets, normal-incidence synthetics, angle gathers
+    reflectivity.py  Kennett reflectivity method with physics switches; point-source records
+examples/wp1_synthetic_well.py      prints the WP1 numbers and writes docs/figures/wp1_*.png
+examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-VSP; docs/figures/wp2_*.png
+tests/            pytest suite (67 tests)
 docs/             implementation plan and figures
 References/       the article (PDF)
 ```
@@ -236,14 +357,20 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 
 ## References
 
+* Aki, K., & Richards, P. G. (1980). *Quantitative Seismology: Theory and Methods*. W. H. Freeman.
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
 * Cavalca, M., Fletcher, R., & Riedel, M. (2013). Q-compensation in complex media—Ray-based and wavefield extrapolation approaches. *SEG Technical Program Expanded Abstracts 2013*, 3831–3835. https://doi.org/10.1190/segam2013-1130.1
+* Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gassmann, F. (1951). Über die Elastizität poröser Medien. *Vierteljahrsschrift der Naturforschenden Gesellschaft in Zürich*, 96, 1–23.
+* Kennett, B. L. N., & Kerry, N. J. (1979). Seismic waves in a stratified half space. *Geophysical Journal International*, 57(3), 557–583. https://doi.org/10.1111/j.1365-246X.1979.tb06779.x
 * Kjartansson, E. (1979). Constant Q-wave propagation and attenuation. *Journal of Geophysical Research*, 84(B9), 4737–4748. https://doi.org/10.1029/JB084iB09p04737
 * Leaney, W. S., & Hornby, B. E. (2007). Depth-dependent anisotropy from sub-salt walkaway VSP data. *69th EAGE Conference & Exhibition*. https://doi.org/10.3997/2214-4609.201401677
 * Lewis, O. J., et al. (2016). Integrated processing of borehole and surface seismic measurements for enhanced well tie and AVO analysis. *78th EAGE Conference & Exhibition*. https://doi.org/10.3997/2214-4609.201601553
 * Mavko, G., Mukerji, T., & Dvorkin, J. (2009). *The Rock Physics Handbook* (2nd ed.). Cambridge University Press. https://doi.org/10.1017/CBO9780511626753
+* O'Doherty, R. F., & Anstey, N. A. (1971). Reflections on amplitudes. *Geophysical Prospecting*, 19(3), 430–458. https://doi.org/10.1111/j.1365-2478.1971.tb00610.x
+* Rüger, A. (1997). P-wave reflection coefficients for transversely isotropic models with vertical and horizontal axis of symmetry. *Geophysics*, 62(3), 713–722. https://doi.org/10.1190/1.1444181
+* Shuey, R. T. (1985). A simplification of the Zoeppritz equations. *Geophysics*, 50(4), 609–614. https://doi.org/10.1190/1.1441936
 * Stewart, R. R., Huddleston, P. D., & Kan, T. K. (1984). Seismic versus sonic velocities: A vertical seismic profiling study. *Geophysics*, 49(8), 1153–1168. https://doi.org/10.1190/1.1441745
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435

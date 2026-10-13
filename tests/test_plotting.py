@@ -33,3 +33,21 @@ def test_figures_render(well):
     import matplotlib.pyplot as plt
 
     plt.close("all")
+
+
+def test_wp2_figures_render():
+    from iwt.plotting import avo_display, gather_panels
+
+    theta = np.linspace(0.0, 40.0, 9)
+    fig = avo_display(theta, {"a": {"x": theta * 0.001, "y": -theta * 0.001},
+                              "b": {"x": theta * 0.0}}, title="t")
+    assert len(fig.axes) == 2
+    t = np.arange(100) * 0.004
+    x = np.arange(5) * 100.0
+    d = np.random.default_rng(0).standard_normal((5, 100))
+    fig2 = gather_panels(t, x, {"one": d, "two": 0.5 * d}, tmin=0.1, tmax=0.3,
+                         marks={"m": 0.2}, title="g")
+    assert len(fig2.axes) == 3          # two panels and the colour bar
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
