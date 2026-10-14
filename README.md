@@ -16,8 +16,8 @@ and of the methods of its three references:
 The roadmap, assumptions, critical assessment and full reference list are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-**Status:** work packages 1 (foundations), 2 (forward modelling) and 3 (ZO-VSP processing, Q
-and the sonic calibration) are implemented. WP4–WP8 (sonic and walkaway anisotropy,
+**Status:** work packages 1 (foundations), 2 (forward modelling), 3 (ZO-VSP processing, Q and
+the sonic calibration) and 4 (sonic anisotropy) are implemented. WP5–WP8 (walkaway anisotropy,
 Q-compensated imaging, the integrated loop, real-data I/O) are still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
@@ -95,6 +95,17 @@ f, S = attenuation.first_arrival_spectra(vsp.t, down, pk)
 dts = attenuation.centroid_shift(f, S, (10.0, 100.0))           # t* relative to 450 m
 q = attenuation.interval_q(depths, t30, dts, boundaries=[600.0, 740.0, 800.0])
 drift = calibration.drift(logs.depth, logs.vp, depths, t30)     # VSP minus integrated sonic
+
+# Thomsen gamma from the sonic logs (WP4)
+from iwt import sonic
+from iwt.synthetic import caliper_log, stoneley_log
+
+radius, caliper = caliper_log(model, logs.depth)                # washouts in the shales
+st = stoneley_log(model, logs.depth, sonic.Mud(1540.0, 1250.0), radius)   # 500 Hz, 46 mm tool
+tool = sonic.Borehole(radius=0.108, tool_radius=0.046)
+res = sonic.sonic_anisotropy(logs.vp, logs.vs, logs.rho, st.slowness, sonic.Mud(1500.0, 1250.0),
+                             tool, frequency=500.0, radius=caliper)   # exact TI Stoneley mode
+res.gamma                                                       # (C66 - C44) / (2 C44)
 ```
 
 ## What WP1 provides
@@ -145,6 +156,19 @@ about 1400 slownesses) with `workers=4`.
 | Q | `iwt.vsp.attenuation` | first-arrival spectra; spectral ratio (Hauge, 1981); centroid shift, Gaussian closed form (Quan & Harris, 1997) and exact inversion; interval 1/Q by non-negative block least squares |
 | drift and calibration | `iwt.calibration` | sonic time, drift curve, classic knee calibration (slowness shift or scaling), Backus vertical velocity, physical calibration (Kjartansson dispersion + Backus + Thomsen anisotropy term) |
 | figures | `iwt.plotting.depth_profiles`, `trace_columns`; `examples/wp3_zovsp.py` | `docs/figures/wp3_*.png` |
+
+## What WP4 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| C33, C44, C66 and gamma (vertical well) | `iwt.sonic.sonic_anisotropy` | Walsh et al. (2007); C66 from the Stoneley slowness, by the tube-wave relation or with the dispersion removed |
+| tube wave with a tool | `tube_wave_slowness`, `c66_from_tube_wave` | the annulus compliance with a concentric tool of given area modulus (Norris, 1990); C66 is the effective modulus (Norris & Sinha, 1993) |
+| exact Stoneley mode | `stoneley_slowness`, `ti_stiffness` | fluid-filled borehole along the axis of a TI formation, with a tool; leaky modes on the outgoing sheet (complex slowness); validated against the tube wave and the Scholte wave |
+| uncertainty | `gamma_jacobian`, `gamma_uncertainty` | exact derivatives for mud slowness and density, radius, tool radius and compliance, Stoneley and dipole slowness, density |
+| mud slowness | `calibrate_mud_slowness` | fit in an interval of assumed gamma |
+| resolution and frequency matching | `running_average`; `shear_frequency`, `qs` | dipole C44 averaged to the Stoneley aperture and moved to the Stoneley frequency |
+| synthetic logs | `iwt.synthetic.caliper_log`, `stoneley_log` | washouts; Stoneley slowness from the exact mode in the Backus medium of the array aperture |
+| figures | `examples/wp4_sonic_anisotropy.py` | `docs/figures/wp4_*.png` |
 
 ## The synthetic well
 
@@ -425,6 +449,93 @@ Residual drift after calibration, against the 30 Hz phase delays:
 
 ![Drift](docs/figures/wp3_drift.png)
 
+## WP4 results (synthetic well; `python examples/wp4_sonic_anisotropy.py`, about 50 s)
+
+**The data.**
+
+- **Stoneley log:** "measured" at 500 Hz with a rigid 46 mm-radius tool, in mud of 1540 m/s and
+  1250 kg/m³ (assumption 15). It is computed with the exact TI borehole mode in the Backus
+  average of the model over a 1.8 m array, with 0.3 % noise.
+- **Borehole:** the bit radius is 108 mm. Washouts enlarge it by up to about 10 % in the
+  overburden shales, and the caliper reads it with 1 mm noise.
+- **Processing:** assumes a mud velocity of 1500 m/s unless the mud is calibrated.
+- **Truth:** γ of the Backus medium over the same 1.8 m.
+
+**The Stoneley wave is leaky in the overburden shales.** In the Lower Cretaceous shale and
+the Hekkingen, the tube wave is faster than the shear wave travelling along the borehole: it is
+controlled by C66 (γ ≈ 0.3), the shear wave by C44 (Vs0 ≈ 950–1050 m/s). The Stoneley wave
+therefore radiates shear energy into the formation.
+
+Slowness relative to the tube wave, unit averages:
+
+| Unit | 500 Hz | 1 kHz | radiation 1/Q at 500 Hz | at 500 Hz, ε = δ = 0 | at 500 Hz, isotropic with μ = C66 |
+|---|---|---|---|---|---|
+| Lower Cretaceous shale (leaky) | 1.0188 | 1.0596 | 0.0099 | 1.0205 | 1.0077 |
+| Hekkingen (leaky) | 1.0138 | 1.0398 | 0.0034 | 1.0157 | 1.0049 |
+| Stø | 1.0007 | 0.9983 | 0 | 1.0007 | 1.0004 |
+| Fruholmen | 1.0000 | 0.9972 | 0 | 1.0000 | 0.9995 |
+
+- **The leaky mode turns into a trapped one at about 1.2–2 kHz.** Near that transition the measured
+  slowness alone is ambiguous (see the notes), so the Stoneley wave is best analysed at
+  ≤ 500 Hz.
+- **The measured C44 matters more than the unknown C11 and C13.** At 500 Hz, the TI mode with
+  ε = δ = 0 is 0.2 % off. The usual isotropic substitute, which ignores the measured C44, is
+  1.1 % off. In slowness that error is amplified about 3.5 times in C66.
+
+![Stoneley dispersion](docs/figures/wp4_dispersion.png)
+
+**The processing ladder.** Each step adds one correction. Errors are the γ estimate minus the
+true sonic-scale γ, as unit means:
+
+| Step | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd | RMS |
+|---|---|---|---|---|---|---|---|---|
+| true γ | 0.267 | 0.303 | 0.159 | 0.023 | 0.095 | 0.063 | 0.122 | |
+| A tube wave, no tool, nominal mud, bit size | −0.167 | −0.144 | −0.096 | −0.059 | −0.078 | −0.039 | −0.045 | 0.088 |
+| B + tool term | −0.034 | +0.003 | +0.028 | +0.044 | +0.036 | +0.078 | +0.083 | 0.092 |
+| C + caliper | −0.050 | −0.019 | +0.020 | +0.044 | +0.036 | +0.077 | +0.083 | 0.092 |
+| D + dispersion (exact TI mode, ε = δ = 0) | +0.006 | +0.027 | +0.034 | +0.045 | +0.044 | +0.077 | +0.084 | 0.093 |
+| D′ as D, isotropic substitute | −0.030 | −0.007 | +0.025 | +0.043 | +0.038 | +0.073 | +0.078 | 0.088 |
+| E + dipole C44 moved to 500 Hz, matched resolution | +0.053 | +0.065 | +0.068 | +0.058 | +0.061 | +0.095 | +0.104 | 0.104 |
+| F + mud calibrated in the Stø, assumed isotropic (1563 m/s) | −0.012 | −0.010 | −0.027 | −0.023 | −0.024 | −0.035 | −0.041 | 0.045 |
+| **G as E with the true mud (1540 m/s)** | **+0.009** | **+0.014** | **+0.003** | **+0.003** | **+0.003** | **+0.004** | **+0.003** | **0.029** |
+
+- **The tool term is the largest single correction.** It raises γ by 0.10–0.15.
+- **With all corrections and the right mud slowness, every unit is within 0.014** (G). The
+  remaining RMS of 0.029 is noise and thin-bed spikes.
+- **The mud slowness decides the result.** A 2.7 % error (1500 against 1540 m/s) shifts γ by
+  +0.05 to +0.10 (E), more than every other correction. It also hides whether the other
+  corrections are right: D and E look worse than C only because the mud error dominates.
+- **Calibrating the mud in the Stø under the assumption that it is isotropic** gives 1563 m/s:
+  its true γ is 0.023. The result is then γ errors of −0.01 to −0.04. In a real well the
+  Stø is permeable, which would also raise its Stoneley slowness (Winkler et al., 1989) and
+  bias such a calibration further.
+
+![Sonic gamma](docs/figures/wp4_gamma.png)
+
+**The uncertainty budget.** Linear propagation for the final processing, with 1σ input
+errors:
+
+- mud slowness 2 %, mud density 1 %;
+- Stoneley slowness 0.3 %, dipole slowness 1 %;
+- density 15 kg/m³;
+- radius and tool radius 1 mm each.
+
+It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
+
+| Unit (median) | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd |
+|---|---|---|---|---|---|---|---|
+| σ(γ), total | 0.033 | 0.041 | 0.039 | 0.035 | 0.038 | 0.050 | 0.055 |
+| from the mud slowness | 0.026 | 0.035 | 0.034 | 0.032 | 0.034 | 0.047 | 0.052 |
+| from the dipole | 0.014 | 0.015 | 0.012 | 0.010 | 0.011 | 0.010 | 0.011 |
+| from the Stoneley | 0.008 | 0.010 | 0.009 | 0.008 | 0.008 | 0.010 | 0.011 |
+
+- **The mud slowness dominates, as the plan expected.** Its effect grows in fast rock, where
+  S_T² − S_f² is small.
+- **In the fast sands and the Snadd, σ(γ) ≈ 0.04–0.055.** That is as large as γ itself, so
+  sonic γ there is only an upper-bound indicator.
+- **In the overburden shales (γ ≈ 0.3) it is well resolved.** Those are the units where the
+  article needed the anisotropy.
+
 ## Assumptions
 
 1. **"LFP article" means Lewis et al. (2016)**, the only article in [`References/`](References/).
@@ -474,6 +585,20 @@ Residual drift after calibration, against the 30 Hz phase delays:
     with no Q, which is enough at vertical incidence.
 14. **The well is vertical,** so the anisotropy term of the physical calibration is zero. It is
     implemented with Thomsen's (1986) weak-anisotropy relation for deviated wells.
+15. **WP4 tool and borehole parameters (assumed):**
+    - the Stoneley slowness is measured at 500 Hz, a single-frequency phase slowness. Real
+      array processing gives a spectrum-weighted average of the dispersion curve (Tang, 2003);
+    - the tool is concentric and rigid, with a 46 mm radius;
+    - the mud is 1540 m/s and 1250 kg/m³; processing assumes 1500 m/s and the correct
+      density, from the mud weight;
+    - the dipole reads the axial shear velocity at 2 kHz; flexural dispersion is assumed
+      already removed.
+16. **The Stoneley wave sees the Backus medium of the 1.8 m array aperture** (arithmetic C66).
+    This is exact for layers much thinner than the borehole radius. For thicker layers the
+    tube wave averages the compliance 1/C66 instead, which matters only next to the stringers.
+17. **Qs = Qp / 2** moves the dipole C44 to the Stoneley frequency, because the VSP gives only
+    the P-wave Q.
+18. **No permeability or mudcake effect** on the Stoneley wave, and no eccentricity.
 
 ## Notes found while implementing
 
@@ -502,6 +627,19 @@ Residual drift after calibration, against the 30 Hz phase delays:
 - **The plan's formula 1/Q_int = 1/Q_app − 1/Q_strat holds only for consistent measurements.**
   Q_app and Q_strat must use the same band and estimator. The second-order interaction (the
   multiples are themselves attenuated) is at or below 1 × 10⁻³ in 1/Q here.
+- **The Stoneley wave is leaky in slow VTI shales** (WP4). The tube wave, set by C66, outruns
+  the axial shear wave, set by C44, so the mode radiates; its slowness is complex. The
+  isotropic substitute with shear modulus C66 misses this, and with it more than half of
+  the dispersion at 500 Hz in the shallow shales.
+- **Close to the leaky–trapped transition, the real Stoneley slowness does not determine C66
+  uniquely.** One leaky and one trapped C66 can give the same slowness; the Stoneley attenuation
+  would tell them apart. In tests with random formations this affected 1 sample in 2400, and
+  about 4 % of the samples had no followable root at 500 Hz.
+- **Gamma combines two tools with different frequencies and apertures.**
+  - The dipole's higher frequency (2 kHz against 500 Hz, Qs ≈ 25) biases γ low by 0.01–0.03.
+  - Its shorter aperture, next to stringers, creates spurious γ spikes.
+  - Both are fixed by moving and averaging C44 to the Stoneley frequency and aperture before
+    γ is formed.
 - **The plan's WP1 check "Backus averaging of isotropic layers gives ε ≥ 0" was wrong.** The test
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
@@ -515,8 +653,9 @@ iwt/
   model.py        ElasticModel1D; Thomsen <-> Cij; stability; phase velocities; Backus; time-depth
   qmodel.py       constant-Q (Kjartansson) dispersion and attenuation
   rockphysics.py  Gassmann fluid substitution, Reuss fluid mixing
-  synthetic.py    the Wisting-like true model and its wireline logs
+  synthetic.py    the Wisting-like true model, its wireline logs, caliper and Stoneley logs
   calibration.py  drift curve; knee and physical (dispersion + Backus + anisotropy) sonic calibration
+  sonic.py        C33, C44, C66 and gamma; tube wave with tool; exact TI Stoneley mode; uncertainty
   plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
@@ -529,7 +668,8 @@ iwt/
 examples/wp1_synthetic_well.py      prints the WP1 numbers and writes docs/figures/wp1_*.png
 examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-VSP; docs/figures/wp2_*.png
 examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; docs/figures/wp3_*.png
-tests/            pytest suite (93 tests)
+examples/wp4_sonic_anisotropy.py    Stoneley dispersion, gamma processing ladder, uncertainty; wp4_*.png
+tests/            pytest suite (111 tests)
 docs/             implementation plan and figures
 References/       the article (PDF)
 ```
@@ -542,7 +682,9 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
 * Banik, N. C., Lerche, I., & Shuey, R. T. (1985). Stratigraphic filtering, Part I: Derivation of the O'Doherty–Anstey formula. *Geophysics*, 50(12), 2768–2774. https://doi.org/10.1190/1.1441897
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
+* Biot, M. A. (1952). Propagation of elastic waves in a cylindrical bore containing a fluid. *Journal of Applied Physics*, 23(9), 997–1005. https://doi.org/10.1063/1.1702365
 * Cavalca, M., Fletcher, R., & Riedel, M. (2013). Q-compensation in complex media—Ray-based and wavefield extrapolation approaches. *SEG Technical Program Expanded Abstracts 2013*, 3831–3835. https://doi.org/10.1190/segam2013-1130.1
+* Cheng, C. H., & Toksöz, M. N. (1981). Elastic wave propagation in a fluid-filled borehole and synthetic acoustic logs. *Geophysics*, 46(7), 1042–1053. https://doi.org/10.1190/1.1441242
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gassmann, F. (1951). Über die Elastizität poröser Medien. *Vierteljahrsschrift der Naturforschenden Gesellschaft in Zürich*, 96, 1–23.
 * Goetz, J. F., Dupal, L., & Bowler, J. (1979). An investigation into discrepancies between sonic log and seismic check shot velocities. *APEA Journal*, 19(1), 131–141. https://doi.org/10.1071/AJ78014
@@ -558,6 +700,8 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Marion, D., Mukerji, T., & Mavko, G. (1994). Scale effects on velocity dispersion: From ray to effective medium theories in stratified media. *Geophysics*, 59(10), 1613–1619. https://doi.org/10.1190/1.1443550
 * Mavko, G., Mukerji, T., & Dvorkin, J. (2009). *The Rock Physics Handbook* (2nd ed.). Cambridge University Press. https://doi.org/10.1017/CBO9780511626753
 * Molyneux, J. B., & Schmitt, D. R. (1999). First-break timing: Arrival onset times by direct correlation. *Geophysics*, 64(5), 1492–1501. https://doi.org/10.1190/1.1444653
+* Norris, A. N. (1990). The speed of a tube wave. *Journal of the Acoustical Society of America*, 87(1), 414–417. https://doi.org/10.1121/1.399262
+* Norris, A. N., & Sinha, B. K. (1993). Weak elastic anisotropy and the tube wave. *Geophysics*, 58(8), 1091–1098. https://doi.org/10.1190/1.1443493
 * O'Doherty, R. F., & Anstey, N. A. (1971). Reflections on amplitudes. *Geophysical Prospecting*, 19(3), 430–458. https://doi.org/10.1111/j.1365-2478.1971.tb00610.x
 * Quan, Y., & Harris, J. M. (1997). Seismic attenuation tomography using the frequency shift method. *Geophysics*, 62(3), 895–905. https://doi.org/10.1190/1.1444197
 * Richards, P. G., & Menke, W. (1983). The apparent attenuation of a scattering medium. *Bulletin of the Seismological Society of America*, 73(4), 1005–1021. https://doi.org/10.1785/BSSA0730041005
@@ -566,10 +710,15 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Seeman, B., & Horowicz, L. (1983). Vertical seismic profiling: Separation of upgoing and downgoing acoustic waves in a stratified medium. *Geophysics*, 48(5), 555–568. https://doi.org/10.1190/1.1441486
 * Shuey, R. T. (1985). A simplification of the Zoeppritz equations. *Geophysics*, 50(4), 609–614. https://doi.org/10.1190/1.1441936
 * Stewart, R. R., Huddleston, P. D., & Kan, T. K. (1984). Seismic versus sonic velocities: A vertical seismic profiling study. *Geophysics*, 49(8), 1153–1168. https://doi.org/10.1190/1.1441745
+* Tang, X. M. (2003). Determining formation shear-wave transverse isotropy from borehole Stoneley-wave measurements. *Geophysics*, 68(1), 118–126. https://doi.org/10.1190/1.1543199
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
+* Valero, H.-P., Djikpesse, H. A., & Sinha, B. K. (2009). Estimation of borehole fluid slowness using sonic array waveforms. *SEG Technical Program Expanded Abstracts 2009*, 361–365. https://doi.org/10.1190/1.3255617
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435
+* White, J. E. (1983). *Underground Sound: Application of Seismic Waves*. Elsevier.
+* White, J. E., & Tongtaow, C. (1981). Cylindrical waves in transversely isotropic media. *Journal of the Acoustical Society of America*, 70(4), 1147–1155. https://doi.org/10.1121/1.386946
 * White, R. E., & Simm, R. (2003). Tutorial: Good practice in well ties. *First Break*, 21(10). https://doi.org/10.3997/1365-2397.21.10.25640
+* Winkler, K. W., Liu, H.-L., & Johnson, D. L. (1989). Permeability and borehole Stoneley waves: Comparison between experiment and theory. *Geophysics*, 54(1), 66–75. https://doi.org/10.1190/1.1442578
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index; the WP3 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The plan lists further references for WP4–WP8.
+DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The plan lists further references for WP5–WP8.
