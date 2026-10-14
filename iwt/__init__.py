@@ -12,11 +12,12 @@ Work package 1 provides the foundations: the published numbers
 substitution (:mod:`iwt.rockphysics`) and a synthetic Wisting-like well
 (:mod:`iwt.synthetic`).  Work package 2 adds forward modelling
 (:mod:`iwt.modeling`), work package 3 ZO-VSP processing and Q
-(:mod:`iwt.vsp`) and the sonic-to-seismic calibration (:mod:`iwt.calibration`).
+(:mod:`iwt.vsp`) and the sonic-to-seismic calibration (:mod:`iwt.calibration`),
+and work package 4 Thomsen's gamma from the sonic logs (:mod:`iwt.sonic`).
 Plotting (:mod:`iwt.plotting`) needs matplotlib.
 """
 
-from . import calibration, paper, qmodel, rockphysics
+from . import calibration, paper, qmodel, rockphysics, sonic
 from .model import (
     ElasticModel1D,
     Stiffness,
@@ -29,13 +30,14 @@ from .model import (
 )
 from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "calibration",
     "paper",
     "qmodel",
     "rockphysics",
+    "sonic",
     "ElasticModel1D",
     "Stiffness",
     "backus_average",

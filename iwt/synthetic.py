@@ -34,6 +34,11 @@ Logs are "measured" from the true model as follows:
 
 In a vertical VTI well the monopole sonic measures Vp0 and both dipole modes
 measure Vs0.
+
+For WP4, :func:`caliper_log` adds washouts in the overburden shales and
+:func:`stoneley_log` a Stoneley slowness log, computed with the exact
+borehole mode of :mod:`iwt.sonic` in the running Backus average of the model
+over the array aperture, at the Stoneley frequency.
 """
 
 from __future__ import annotations
@@ -60,6 +65,10 @@ __all__ = [
     "wisting_like_model",
     "synthetic_logs",
     "wisting_like_well",
+    "WASHOUT",
+    "caliper_log",
+    "StoneleyLog",
+    "stoneley_log",
 ]
 
 
@@ -321,3 +330,77 @@ def wisting_like_well(seed: int = 2016, log_seed: Optional[int] = 7):
     """``(model, logs)`` for the default synthetic well."""
     model = wisting_like_model(seed=seed)
     return model, synthetic_logs(model, seed=log_seed)
+
+
+#: Assumed washout (fractional enlargement of the bit radius) per unit: the soft,
+#: shallow shales wash out, the sands and the Snadd hardly.
+WASHOUT = {"Lower Cretaceous shale": 0.06, "Hekkingen": 0.08, "Fuglen": 0.03}
+
+
+def caliper_log(model: ElasticModel1D, depth, bit_radius: float = 0.108,
+                washout: Optional[dict] = None, noise: float = 0.001,
+                seed: Optional[int] = 5):
+    """``(radius, caliper)``: true borehole radius and its measurement (m) at ``depth``.
+
+    The enlargement in a unit is ``washout[unit]`` times a positive, smooth
+    random factor (mean about 1, correlation length 2 m); ``noise`` (m) is the
+    caliper's standard deviation.
+    """
+    washout = WASHOUT if washout is None else washout
+    depth = np.asarray(depth, dtype=float)
+    rng = np.random.default_rng(seed)
+    dz = float(np.median(np.diff(depth))) if depth.size > 1 else 1.0
+    factor = np.clip(1.0 + 0.5 * _ar1(depth.size, dz, 2.0, rng), 0.0, None)
+    names = np.array([str(lab).replace(" stringer", "").replace(" (oil)", "")
+                      for lab in model.at(depth)["label"]])
+    frac = np.array([washout.get(n, 0.0) for n in names])
+    radius = bit_radius * (1.0 + frac * factor)
+    caliper = radius + noise * rng.standard_normal(depth.size)
+    return radius, caliper
+
+
+@dataclass
+class StoneleyLog:
+    """Stoneley phase slowness (s/m) and radiation attenuation 1/Q at ``frequency`` (Hz)."""
+
+    depth: np.ndarray
+    slowness: np.ndarray
+    inv_q: np.ndarray
+    frequency: float
+    meta: dict = field(default_factory=dict)
+
+
+def stoneley_log(model: ElasticModel1D, depth, mud, radius, tool_radius: float = 0.046,
+                 tool_modulus: float = np.inf, frequency: float = 500.0,
+                 aperture: float = 1.8, noise: float = 0.003,
+                 seed: Optional[int] = 11) -> StoneleyLog:
+    """Stoneley slowness log "measured" in a vertical well through ``model``.
+
+    The model is dispersed from ``model.f_ref`` to ``frequency`` (constant Q),
+    Backus averaged over the array ``aperture`` (m), and the exact Stoneley mode
+    of the TI formation is computed with :func:`iwt.sonic.stoneley_slowness` for
+    the ``mud`` (:class:`iwt.sonic.Mud`), borehole ``radius`` (m, scalar or per
+    depth) and a concentric tool.  ``noise`` is the relative standard deviation
+    of the slowness.  Where the mode cannot be followed the log is NaN.
+    """
+    from .model import thomsen_to_cij
+    from .sonic import stoneley_slowness
+
+    depth = np.asarray(depth, dtype=float)
+    m = model.copy()
+    m.vp0 = phase_velocity(model.vp0, model.qp, frequency, model.f_ref)
+    m.vs0 = np.where(model.is_fluid, 0.0,
+                     phase_velocity(np.where(model.is_fluid, 1.0, model.vs0), model.qs, frequency,
+                                    model.f_ref))
+    eff = m.backus(aperture, respect=[model.interfaces[np.argmax(~model.is_fluid)]]).at(depth)
+    c = thomsen_to_cij(eff["vp0"], eff["vs0"], eff["rho"], eff["eps"], eff["delta"], eff["gamma"])
+    rad = np.broadcast_to(np.asarray(radius, dtype=float), depth.shape)
+    s = stoneley_slowness(frequency, (c.c11, c.c13, c.c33, c.c44, c.c66), eff["rho"],
+                          mud.slowness, mud.density, rad, tool_radius, tool_modulus, full=True)
+    inv_q = 2.0 * s.imag / s.real
+    slow = s.real
+    if seed is not None:
+        slow = slow * (1.0 + noise * np.random.default_rng(seed).standard_normal(depth.size))
+    meta = dict(mud_velocity=mud.velocity, mud_density=mud.density, tool_radius=tool_radius,
+                tool_modulus=tool_modulus, aperture=aperture, noise=noise, seed=seed)
+    return StoneleyLog(depth, slow, inv_q, frequency, meta)

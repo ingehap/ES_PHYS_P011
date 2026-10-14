@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1, WP2 and WP3 implemented** (see the README); WP4–WP8 to do. This document says what will be built, in what
+Status: **WP1–WP4 implemented** (see the README); WP5–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -237,7 +237,24 @@ effect is the Backus term, and using Q_app for the dispersion as well counts it 
 - recover a known drift from a known Q and frequency pair;
 - the corridor stack correlates with the true reflectivity.
 
-### WP4: Sonic anisotropy (Walsh et al., 2007)
+### WP4: Sonic anisotropy (Walsh et al., 2007) (done)
+
+*As built:* `iwt.sonic`, plus synthetic Stoneley and caliper logs in `iwt.synthetic`. Changes
+from the plan:
+
+- **Tool term:** built as planned. **Eccentricity is not modelled.** Norris (1990) reports
+  that it lowers the tube-wave speed, but the size of the effect was not quantified here.
+- **C66 citation:** that the tube wave senses C66 is now cited to Norris & Sinha (1993).
+  Norris (1990) is cited for the tool term.
+- **Added: the exact Stoneley mode.** The borehole mode is solved exactly in the TI formation,
+  with a tool (White & Tongtaow, 1981, for the TI fields). This removes the dispersion bias
+  of the tube-wave formula.
+  - The Stoneley wave in the slow Wisting-like shales turned out to be *leaky*. The tube
+    wave, set by C66, outruns the axial shear wave, set by C44.
+  - The usual isotropic substitute, with C66 as its shear modulus, misses this.
+- **Added: the dipole's frequency and resolution.** The dipole C44 is moved to the Stoneley
+  frequency and averaged to the Stoneley aperture before gamma is formed.
+- **Added: mud-slowness calibration** in a reference interval.
 
 **Builds** the vertical-well case:
 
@@ -479,6 +496,7 @@ All DOIs were checked against the Scite index on 2026-10-13, except where noted.
 * Kjartansson, E. (1979). Constant Q-wave propagation and attenuation. *Journal of Geophysical Research*, 84(B9), 4737–4748. https://doi.org/10.1029/JB084iB09p04737
 * Miller, D. E., & Spencer, C. (1994). An exact inversion for anisotropic moduli from phase slowness data. *Journal of Geophysical Research*, 99(B11), 21651–21657. https://doi.org/10.1029/94JB01848
 * Norris, A. N. (1990). The speed of a tube wave. *Journal of the Acoustical Society of America*, 87(1), 414–417. https://doi.org/10.1121/1.399262
+* Norris, A. N., & Sinha, B. K. (1993). Weak elastic anisotropy and the tube wave. *Geophysics*, 58(8), 1091–1098. https://doi.org/10.1190/1.1443493 (added in WP4)
 * O'Doherty, R. F., & Anstey, N. A. (1971). Reflections on amplitudes. *Geophysical Prospecting*, 19(3), 430–458. https://doi.org/10.1111/j.1365-2478.1971.tb00610.x
 * Quan, Y., & Harris, J. M. (1997). Seismic attenuation tomography using the frequency shift method. *Geophysics*, 62(3), 895–905. https://doi.org/10.1190/1.1444197
 * Rüger, A. (1997). P-wave reflection coefficients for transversely isotropic models with vertical and horizontal axis of symmetry. *Geophysics*, 62(3), 713–722. https://doi.org/10.1190/1.1444181
@@ -490,6 +508,7 @@ All DOIs were checked against the Scite index on 2026-10-13, except where noted.
 * Walden, A. T., & White, R. E. (1998). Seismic wavelet estimation: A frequency domain solution to a geophysical noisy input-output problem. *IEEE Transactions on Geoscience and Remote Sensing*, 36(1), 287–297. https://doi.org/10.1109/36.655337
 * Wang, Y. (2002). A stable and efficient approach of inverse Q filtering. *Geophysics*, 67(2), 657–663. https://doi.org/10.1190/1.1468627
 * Wang, Y. (2006). Inverse Q-filter for seismic resolution enhancement. *Geophysics*, 71(3), V51–V60. https://doi.org/10.1190/1.2192912
+* White, J. E., & Tongtaow, C. (1981). Cylindrical waves in transversely isotropic media. *Journal of the Acoustical Society of America*, 70(4), 1147–1155. https://doi.org/10.1121/1.386946 (added in WP4)
 * White, R. E., & Simm, R. (2003). Tutorial: Good practice in well ties. *First Break*, 21(10). https://doi.org/10.3997/1365-2397.21.10.25640
 
 **Facts about the Hanssen well and data access (web sources)**
