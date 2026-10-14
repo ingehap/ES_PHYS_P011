@@ -93,3 +93,46 @@ def test_knee_calibration_mode_check():
     v = np.full(Z_LOG.size, 2500.0)
     with pytest.raises(ValueError):
         C.knee_calibration(Z_LOG, v, [600.0, 900.0], [0.1, 0.2], mode="stretch")
+
+
+# -- gamma -> (eps, delta) calibration (WP5) ------------------------------------------
+
+
+def test_upscale_gamma_backus():
+    z = np.arange(0.0, 200.0, 0.1)
+    c44 = np.where((z // 1.0) % 2 == 0, 5e9, 15e9)            # 1 m beds, isotropic each
+    g = C.upscale_gamma(z, c44, c44, 20.0)
+    # C66 arithmetic, C44 harmonic mean: gamma = (10 / 7.5 - 1) / 2 = 1/6
+    np.testing.assert_allclose(g[500:1500], 1.0 / 6.0, rtol=1e-2)
+    flat = C.upscale_gamma(z, np.full(z.size, 4e9), np.full(z.size, 5e9), 20.0)
+    np.testing.assert_allclose(flat[100:-100], 0.125, rtol=1e-12)
+
+
+def test_bayes_linear_recovers_line_and_errors():
+    rng = np.random.default_rng(0)
+    x = np.linspace(0.05, 0.30, 6)
+    s = np.full(6, 0.01)
+    z = []
+    for _ in range(400):
+        y = 0.01 + 0.8 * x + s * rng.standard_normal(6)
+        cal = C.bayes_linear(x, y, s, scatter=0.0)
+        z.append((cal.coef - [0.01, 0.8]) / np.sqrt(np.diag(cal.coef_cov)))
+    z = np.array(z)
+    assert np.all(np.abs(z.mean(axis=0)) < 0.15) and np.all(np.abs(z.std(axis=0) - 1) < 0.1)
+    # prediction error grows away from the calibrated range (extrapolation)
+    _, sd = cal.predict(np.array([0.175, 0.30, 0.6]), scatter=False)
+    assert sd[0] < sd[1] < sd[2]
+    # leave-one-out predictions are honest: z-scores of order one
+    assert np.all(np.abs(cal.loo_z) < 4.0) and cal.loo_mean.shape == (6,)
+
+
+def test_bayes_linear_estimates_extra_scatter():
+    rng = np.random.default_rng(1)
+    x = rng.uniform(0.0, 0.3, 60)
+    s = np.full(60, 0.005)
+    y = 0.02 + 0.7 * x + np.hypot(0.02, 0.005) * rng.standard_normal(60)
+    cal = C.bayes_linear(x, y, s)
+    assert 0.014 < cal.scatter < 0.028
+    assert np.all(np.abs(cal.loo_z) < 4.0) and 0.7 < cal.loo_z.std() < 1.3
+    # with the scatter ignored the leave-one-out residuals are far too large
+    assert C.bayes_linear(x, y, s, scatter=0.0).loo_z.std() > 2.5

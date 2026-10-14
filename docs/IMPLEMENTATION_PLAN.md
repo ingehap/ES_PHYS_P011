@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1–WP4 implemented** (see the README); WP5–WP8 to do. This document says what will be built, in what
+Status: **WP1–WP5 implemented** (see the README); WP6–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -275,7 +275,28 @@ deviated-well data appear.
 - γ = 0 in an isotropic formation;
 - sensitivity derivatives against finite differences.
 
-### WP5: Walkaway VSP anisotropy (Leaney & Hornby, 2007)
+### WP5: Walkaway VSP anisotropy (Leaney & Hornby, 2007) (done)
+
+*As built:* `iwt.raytrace` (exact qP kinematics, two-point rays in layered VTI),
+`iwt.vsp.walkaway` (synthetic survey, measurements, inversion, checks) and
+`iwt.calibration.upscale_gamma` / `bayes_linear`. Changes from the plan:
+
+- **Residual:** the phase velocity against the phase angle, V(θ), and the polarization ψ(θ),
+  not q(p). The q(p) form has a hard edge at the horizontal slowness that noisy far-offset p's
+  cross.
+- **Error model added:** the joint covariance of p, q and ψ is propagated from the picks
+  (overlapping source windows correlate the p's), mapped through the linearized residuals
+  (effective variance) and frozen per iteration. Slowness-only coverage is then correct.
+- **Priors:** Vp0 (ZO-VSP) as well as Vs0 (dipole). Without near angles Vp0 trades off with δ,
+  and slowness-only fits get almost no Vp0 information at 30–60°. The γ prior on ε is a
+  documented option (circularity check), not the default.
+- **Found, not fixed:** with polarizations the estimator has an errors-in-variables bias of
+  about 0.5σ that scales with the noise variance. ODR and a parametric bootstrap removed part of
+  it and were not adopted. A heterogeneous sub-array (slowness averaged, polarization local)
+  biases ε by up to 0.03 without raising χ².
+- **Lateral heterogeneity test:** a polarization check of a slowness-only fit (polarizations
+  are local; p is source-side). The correction of Grechka et al. (2024) is not built.
+- **Synthetic survey:** exact ray theory, no waveforms; head waves not modelled.
 
 **Measurements:**
 
@@ -296,7 +317,7 @@ would hide (Miller & Spencer, 1994).
 
 **Lateral heterogeneity:** horizontal slowness at depth equals surface slowness only in a
 laterally homogeneous medium (Gaiser, 1990). The plan includes a test that flags violations of
-this assumption (Grechka et al., arXiv 2019).
+this assumption (Grechka et al., 2024).
 
 **γ → (ε, δ) calibration** (`calibration.py`):
 
@@ -434,8 +455,7 @@ synthetic AVA and on the tie.
 6. **The WA-VSP slowness method assumes lateral homogeneity.** Surface slowness is taken to equal
    slowness at depth (Gaiser, 1990). For a shallow target recorded with a 200 m exclusion zone,
    overburden heterogeneity directly biases ε and δ. *Better:* check for consistency across
-   azimuths, and correct for weak lateral heterogeneity where needed (Grechka et al., arXiv
-   2019).
+   azimuths, and correct for weak lateral heterogeneity where needed (Grechka et al., 2024).
 7. **The article's Q-PSDM is real 3D/2D imaging; here it is reduced to 1D.** This keeps the Fig. 3
    experiment, but the Fig. 5 image improvement is only illustrated, not reproduced.
 8. **Interbed multiples are identified but not removed.** *Better:* go from diagnosis to
@@ -488,7 +508,8 @@ All DOIs were checked against the Scite index on 2026-10-13, except where noted.
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gaiser, J. E. (1990). Transversely isotropic phase velocity analysis from slowness estimates. *Journal of Geophysical Research*, 95(B7), 11241–11254. https://doi.org/10.1029/JB095iB07p11241
-* Grechka, V., Tsvankin, I., & Contreras, P. (2019). Inversion of walkaway VSP data in the presence of lateral velocity heterogeneity. arXiv:1901.02916. https://doi.org/10.48550/arXiv.1901.02916 (arXiv posting; the journal version has not been checked)
+* Grechka, V., Tsvankin, I., & Contreras, P. (2024). Inversion of walkaway VSP data in the presence of lateral velocity heterogeneity. *Energy Geoscience*, 5(2), 100255. https://doi.org/10.1016/j.engeos.2023.100255 (first posted as arXiv:1901.02916, 2019)
+* Grechka, V., & Mateeva, A. (2007). Inversion of P-wave VSP data for local anisotropy: Theory and case study. *Geophysics*, 72(4), D69–D79. https://doi.org/10.1190/1.2742970
 * Hauge, P. S. (1981). Measurements of attenuation from vertical seismic profiles. *Geophysics*, 46(11), 1548–1558. https://doi.org/10.1190/1.1441161
 * Horne, S., Walsh, J., & Miller, D. (2012). Elastic anisotropy in the Haynesville Shale from dipole sonic data. *First Break*, 30(2). https://doi.org/10.3997/1365-2397.2011039
 * Jakubowicz, H. (1998). Wave equation prediction and removal of interbed multiples. *SEG Technical Program Expanded Abstracts 1998*, 1527–1530. https://doi.org/10.1190/1.1820204
@@ -503,6 +524,7 @@ All DOIs were checked against the Scite index on 2026-10-13, except where noted.
 * Shuey, R. T. (1985). A simplification of the Zoeppritz equations. *Geophysics*, 50(4), 609–614. https://doi.org/10.1190/1.1441936
 * Stewart, R. R., Huddleston, P. D., & Kan, T. K. (1984). Seismic versus sonic velocities: A vertical seismic profiling study. *Geophysics*, 49(8), 1153–1168. https://doi.org/10.1190/1.1441745
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
+* Tsvankin, I. (2012). *Seismic Signatures and Analysis of Reflection Data in Anisotropic Media* (3rd ed.). SEG. https://doi.org/10.1190/1.9781560803003
 * Tonn, R. (1991). The determination of the seismic quality factor Q from VSP data: A comparison of different computational methods. *Geophysical Prospecting*, 39(1), 1–27. https://doi.org/10.1111/j.1365-2478.1991.tb00298.x
 * Virieux, J. (1986). P-SV wave propagation in heterogeneous media: Velocity-stress finite-difference method. *Geophysics*, 51(4), 889–901. https://doi.org/10.1190/1.1442147
 * Walden, A. T., & White, R. E. (1998). Seismic wavelet estimation: A frequency domain solution to a geophysical noisy input-output problem. *IEEE Transactions on Geoscience and Remote Sensing*, 36(1), 287–297. https://doi.org/10.1109/36.655337
