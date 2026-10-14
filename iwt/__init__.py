@@ -13,13 +13,15 @@ substitution (:mod:`iwt.rockphysics`) and a synthetic Wisting-like well
 (:mod:`iwt.synthetic`).  Work package 2 adds forward modelling
 (:mod:`iwt.modeling`), work package 3 ZO-VSP processing and Q
 (:mod:`iwt.vsp`) and the sonic-to-seismic calibration (:mod:`iwt.calibration`),
-work package 4 Thomsen's gamma from the sonic logs (:mod:`iwt.sonic`), and work
+work package 4 Thomsen's gamma from the sonic logs (:mod:`iwt.sonic`), work
 package 5 exact qP ray tracing (:mod:`iwt.raytrace`), the walkaway VSP inversion
-(:mod:`iwt.vsp.walkaway`) and the gamma -> (eps, delta) calibration.
+(:mod:`iwt.vsp.walkaway`) and the gamma -> (eps, delta) calibration, and work
+package 6 Q-compensated depth migration of CMP gathers (:mod:`iwt.imaging`) with
+AVA extraction (:mod:`iwt.avo`).
 Plotting (:mod:`iwt.plotting`) needs matplotlib.
 """
 
-from . import calibration, paper, qmodel, raytrace, rockphysics, sonic
+from . import avo, calibration, imaging, paper, qmodel, raytrace, rockphysics, sonic
 from .model import (
     ElasticModel1D,
     Stiffness,
@@ -32,10 +34,12 @@ from .model import (
 )
 from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
+    "avo",
     "calibration",
+    "imaging",
     "paper",
     "qmodel",
     "raytrace",

@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1–WP5 implemented** (see the README); WP6–WP8 to do. This document says what will be built, in what
+Status: **WP1–WP6 implemented** (see the README); WP7–WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -123,7 +123,7 @@ iwt/
                     alternative (Kjartansson 1979 dispersion + Backus + anisotropy); gamma -> eps, delta
   raytrace.py       exact VTI phase/group velocities; 1D layered ray tracing; traveltime, t*, angle
   imaging.py        1D prestack depth migration of CMP gathers (isotropic / VTI) with t* amplitude and
-                    phase Q-compensation and a gain limit (Cavalca et al. 2013; Wang 2006)
+                    phase Q-compensation and a gain limit (Cavalca et al. 2013; Wang 2002)
   avo.py            AVA extraction, intercept/gradient fits, Vs scenarios, sensitivity (Jacobian)
   welltie.py        wavelet estimation (Walden & White 1998), correlation, time shift, phase
   multiples.py      interbed-multiple contamination: full minus Born (single-scattering) primaries
@@ -334,7 +334,24 @@ visible rather than hiding it.
 - noisy data → posterior covering the truth at the stated rate (coverage test);
 - the ε–δ trade-off grows as the near-angle cut-off increases.
 
-### WP6: Ray tracing and Q-compensated depth imaging (Cavalca et al., 2013)
+### WP6: Ray tracing and Q-compensated depth imaging (Cavalca et al., 2013) (done)
+
+*As built:* `iwt.raytrace.qp_group_velocity` and `reflection_table`, `iwt.imaging` and a small
+`iwt.avo`. Changes from the plan:
+
+- **Amplitudes:** the migration is true-amplitude. A stationary-phase spreading factor for a
+  point source in layered VTI turns reflection amplitudes into plane-wave R(θ); a check against
+  the reflectivity method holds it to 0.7 % over 20–44°.
+- **Q operator:** first order in 1/Q, with Wang's (2002) stabilization parameterized by the
+  maximum gain. Phase-only compensation is an option. A common high cut is applied to all
+  variants.
+- **Fig. 3 scoring:** the reference is the Q-free reflectivity gather migrated with the true
+  VTI model; the AVA misfit is reported next to the intercept and gradient. The 2-term gradient
+  alone is fragile, because the Stø-top event is tuned by the stringers above.
+- **Variants added:** two isotropic models (vertical Vp0 and NMO velocity), phase-only Q, a Q
+  model 30 % too low, and a gain-limit study on noisy data.
+- **Not built:** 2D/3D migration (critical point 7), ghost correction, and the use of the
+  estimated (WP3–WP5) models, which is WP7's loop.
 
 **Builds:**
 

@@ -17,9 +17,9 @@ The roadmap, assumptions, critical assessment and full reference list are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
 **Status:** work packages 1 (foundations), 2 (forward modelling), 3 (ZO-VSP processing, Q and
-the sonic calibration), 4 (sonic anisotropy) and 5 (walkaway anisotropy and the γ → (ε, δ)
-calibration) are implemented. WP6–WP8 (Q-compensated imaging, the integrated loop, real-data
-I/O) are still to do.
+the sonic calibration), 4 (sonic anisotropy), 5 (walkaway anisotropy and the γ → (ε, δ)
+calibration) and 6 (ray tracing and Q-compensated depth imaging, the Fig. 3 experiment) are
+implemented. WP7–WP8 (the integrated loop, real-data I/O) are still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -123,6 +123,18 @@ post["eps"], post["delta"], post.data_weight                     # (mean, std); 
 cal = bayes_linear([0.20, 0.05, 0.10, 0.07, 0.12, 0.12],         # gamma at the levels
                    [0.13, 0.05, 0.08, 0.05, 0.10, 0.10], 0.006)  # walkaway eps and its errors
 cal.predict(0.3)                                                 # eps (mean, std) where gamma = 0.3
+
+# ray tracing and Q-compensated depth migration of a CMP gather (WP6)
+from iwt import avo, imaging
+from iwt.raytrace import reflection_table
+
+mig = model.backus(20.0, respect=[417.5])                       # migration model (VTI, with Q)
+x = np.arange(100.0, 851.0, 50.0)
+tab = reflection_table(mig, np.arange(640.0, 700.0, 0.5), x, 6.0, 8.0)  # time, angle, t*, spreading
+gather = np.zeros((x.size, 1000))                                # data[offset, time], dt = 1 ms
+image = imaging.migrate_cmp(gather, 0.001, x, mig, tab.depth, 6.0, 8.0, table=tab,
+                            q_compensation="amplitude", gain_limit=10.0, high_cut=80.0)
+fit = avo.intercept_gradient(tab.theta[0], np.ones(x.size), (20.0, 44.0))   # A + B sin^2(theta)
 ```
 
 ## What WP1 provides
@@ -186,6 +198,30 @@ about 1400 slownesses) with `workers=4`.
 | resolution and frequency matching | `running_average`; `shear_frequency`, `qs` | dipole C44 averaged to the Stoneley aperture and moved to the Stoneley frequency |
 | synthetic logs | `iwt.synthetic.caliper_log`, `stoneley_log` | washouts; Stoneley slowness from the exact mode in the Backus medium of the array aperture |
 | figures | `examples/wp4_sonic_anisotropy.py` | `docs/figures/wp4_*.png` |
+
+## What WP5 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| exact qP kinematics | `iwt.raytrace` | phase velocity, vertical slowness q(p) and dq/dp, polarization (Christoffel eigenvector) in VTI; fluids included (Tsvankin, 2012) |
+| two-point rays in layered VTI | `two_point` | X(p) and T(p) summed over layers for all receivers at once, Newton refinement; rays steeper than `max_angle` (85°) in any layer are excluded (refraction regime) |
+| synthetic walkaway VSP | `iwt.vsp.walkaway.synthetic_walkaway` | direct qP times and polarizations, several azimuths, source statics, noise |
+| slowness and polarization | `measure_slowness`, `hodogram_polarization` | q across a receiver sub-array, p across neighbouring sources, mean polarization; their **joint covariance** from the linear operators (overlapping windows correlate the p's) |
+| inversion with priors | `invert_level`, `Posterior` | (Vp0, Vs0, ε, δ) by Levenberg–Marquardt on V(θ) and ψ(θ) with the exact Christoffel equation (or Thomsen's weak form); effective-variance residual covariance, frozen per iteration; Gaussian priors; Laplace posterior; `data_weight` = 1 − σ²_post/σ²_prior |
+| consistency checks | `azimuthal_consistency`, `polarization_check` | χ² test across azimuths (VTI hypothesis); polarizations predicted by a slowness-only fit, with the posterior uncertainty of the prediction (lateral heterogeneity) |
+| γ → (ε, δ) calibration | `iwt.calibration.upscale_gamma`, `bayes_linear` | Backus upscaling of C44 and C66 to the sub-array length; Bayesian straight line with the walkaway errors, extra scatter by type-II maximum likelihood, leave-one-out predictions, predictive bands |
+| figures | `examples/wp5_walkaway.py` | `docs/figures/wp5_*.png` |
+
+## What WP6 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| exact VTI group velocity | `iwt.raytrace.qp_group_velocity` | ray direction normal to the slowness surface; checked against Tsvankin's formula |
+| layered PP reflection rays | `iwt.raytrace.reflection_table` | two-way time, ray parameter, reflection angle, t\* = Σt/Q and the true-amplitude spreading factor for every depth × offset; Newton refinement on exact layer sums (second derivative of q analytic) |
+| Q operators | `iwt.imaging.attenuation_operator`, `attenuate`, `compensate`, `stabilization` | first-order Kjartansson constant-Q operator (amplitude and dispersion) in numpy's FFT convention; inverse with Wang's (2002) stabilization, parameterized by the maximum gain |
+| Q-compensated depth migration | `iwt.imaging.migrate_cmp`, `Image` | 1D Kirchhoff-type prestack depth migration of a CMP gather with stationary-phase weights; per output point an inverse Q filter for its own t\* (ray-based, Cavalca et al., 2013); amplitude + phase or phase-only; common high-cut taper |
+| AVA | `iwt.avo.pick_event`, `intercept_gradient` | event tracking across a migrated gather (follows residual moveout); A + B sin²θ fit |
+| figures | `examples/wp6_imaging.py` | `docs/figures/wp6_*.png` |
 
 ## The synthetic well
 
@@ -466,18 +502,92 @@ Residual drift after calibration, against the 30 Hz phase delays:
 
 ![Drift](docs/figures/wp3_drift.png)
 
-## What WP5 provides
+## WP4 results (synthetic well; `python examples/wp4_sonic_anisotropy.py`, about 50 s)
 
-| Plan item | Code | Notes |
-|---|---|---|
-| exact qP kinematics | `iwt.raytrace` | phase velocity, vertical slowness q(p) and dq/dp, polarization (Christoffel eigenvector) in VTI; fluids included (Tsvankin, 2012) |
-| two-point rays in layered VTI | `two_point` | X(p) and T(p) summed over layers for all receivers at once, Newton refinement; rays steeper than `max_angle` (85°) in any layer are excluded (refraction regime) |
-| synthetic walkaway VSP | `iwt.vsp.walkaway.synthetic_walkaway` | direct qP times and polarizations, several azimuths, source statics, noise |
-| slowness and polarization | `measure_slowness`, `hodogram_polarization` | q across a receiver sub-array, p across neighbouring sources, mean polarization; their **joint covariance** from the linear operators (overlapping windows correlate the p's) |
-| inversion with priors | `invert_level`, `Posterior` | (Vp0, Vs0, ε, δ) by Levenberg–Marquardt on V(θ) and ψ(θ) with the exact Christoffel equation (or Thomsen's weak form); effective-variance residual covariance, frozen per iteration; Gaussian priors; Laplace posterior; `data_weight` = 1 − σ²_post/σ²_prior |
-| consistency checks | `azimuthal_consistency`, `polarization_check` | χ² test across azimuths (VTI hypothesis); polarizations predicted by a slowness-only fit, with the posterior uncertainty of the prediction (lateral heterogeneity) |
-| γ → (ε, δ) calibration | `iwt.calibration.upscale_gamma`, `bayes_linear` | Backus upscaling of C44 and C66 to the sub-array length; Bayesian straight line with the walkaway errors, extra scatter by type-II maximum likelihood, leave-one-out predictions, predictive bands |
-| figures | `examples/wp5_walkaway.py` | `docs/figures/wp5_*.png` |
+**The data.**
+
+- **Stoneley log:** "measured" at 500 Hz with a rigid 46 mm-radius tool, in mud of 1540 m/s and
+  1250 kg/m³ (assumption 15). It is computed with the exact TI borehole mode in the Backus
+  average of the model over a 1.8 m array, with 0.3 % noise.
+- **Borehole:** the bit radius is 108 mm. Washouts enlarge it by up to about 10 % in the
+  overburden shales, and the caliper reads it with 1 mm noise.
+- **Processing:** assumes a mud velocity of 1500 m/s unless the mud is calibrated.
+- **Truth:** γ of the Backus medium over the same 1.8 m.
+
+**The Stoneley wave is leaky in the overburden shales.** In the Lower Cretaceous shale and
+the Hekkingen, the tube wave is faster than the shear wave travelling along the borehole: it is
+controlled by C66 (γ ≈ 0.3), the shear wave by C44 (Vs0 ≈ 950–1050 m/s). The Stoneley wave
+therefore radiates shear energy into the formation.
+
+Slowness relative to the tube wave, unit averages:
+
+| Unit | 500 Hz | 1 kHz | radiation 1/Q at 500 Hz | at 500 Hz, ε = δ = 0 | at 500 Hz, isotropic with μ = C66 |
+|---|---|---|---|---|---|
+| Lower Cretaceous shale (leaky) | 1.0188 | 1.0596 | 0.0099 | 1.0205 | 1.0077 |
+| Hekkingen (leaky) | 1.0138 | 1.0398 | 0.0034 | 1.0157 | 1.0049 |
+| Stø | 1.0007 | 0.9983 | 0 | 1.0007 | 1.0004 |
+| Fruholmen | 1.0000 | 0.9972 | 0 | 1.0000 | 0.9995 |
+
+- **The leaky mode turns into a trapped one at about 1.2–2 kHz.** Near that transition the measured
+  slowness alone is ambiguous (see the notes), so the Stoneley wave is best analysed at
+  ≤ 500 Hz.
+- **The measured C44 matters more than the unknown C11 and C13.** At 500 Hz, the TI mode with
+  ε = δ = 0 is 0.2 % off. The usual isotropic substitute, which ignores the measured C44, is
+  1.1 % off. In slowness that error is amplified about 3.5 times in C66.
+
+![Stoneley dispersion](docs/figures/wp4_dispersion.png)
+
+**The processing ladder.** Each step adds one correction. Errors are the γ estimate minus the
+true sonic-scale γ, as unit means:
+
+| Step | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd | RMS |
+|---|---|---|---|---|---|---|---|---|
+| true γ | 0.267 | 0.303 | 0.159 | 0.023 | 0.095 | 0.063 | 0.122 | |
+| A tube wave, no tool, nominal mud, bit size | −0.167 | −0.144 | −0.096 | −0.059 | −0.078 | −0.039 | −0.045 | 0.088 |
+| B + tool term | −0.034 | +0.003 | +0.028 | +0.044 | +0.036 | +0.078 | +0.083 | 0.092 |
+| C + caliper | −0.050 | −0.019 | +0.020 | +0.044 | +0.036 | +0.077 | +0.083 | 0.092 |
+| D + dispersion (exact TI mode, ε = δ = 0) | +0.006 | +0.027 | +0.034 | +0.045 | +0.044 | +0.077 | +0.084 | 0.093 |
+| D′ as D, isotropic substitute | −0.030 | −0.007 | +0.025 | +0.043 | +0.038 | +0.073 | +0.078 | 0.088 |
+| E + dipole C44 moved to 500 Hz, matched resolution | +0.053 | +0.065 | +0.068 | +0.058 | +0.061 | +0.095 | +0.104 | 0.104 |
+| F + mud calibrated in the Stø, assumed isotropic (1563 m/s) | −0.012 | −0.010 | −0.027 | −0.023 | −0.024 | −0.035 | −0.041 | 0.045 |
+| **G as E with the true mud (1540 m/s)** | **+0.009** | **+0.014** | **+0.003** | **+0.003** | **+0.003** | **+0.004** | **+0.003** | **0.029** |
+
+- **The tool term is the largest single correction.** It raises γ by 0.10–0.15.
+- **With all corrections and the right mud slowness, every unit is within 0.014** (G). The
+  remaining RMS of 0.029 is noise and thin-bed spikes.
+- **The mud slowness decides the result.** A 2.7 % error (1500 against 1540 m/s) shifts γ by
+  +0.05 to +0.10 (E), more than every other correction. It also hides whether the other
+  corrections are right: D and E look worse than C only because the mud error dominates.
+- **Calibrating the mud in the Stø under the assumption that it is isotropic** gives 1563 m/s:
+  its true γ is 0.023. The result is then γ errors of −0.01 to −0.04. In a real well the
+  Stø is permeable, which would also raise its Stoneley slowness (Winkler et al., 1989) and
+  bias such a calibration further.
+
+![Sonic gamma](docs/figures/wp4_gamma.png)
+
+**The uncertainty budget.** Linear propagation for the final processing, with 1σ input
+errors:
+
+- mud slowness 2 %, mud density 1 %;
+- Stoneley slowness 0.3 %, dipole slowness 1 %;
+- density 15 kg/m³;
+- radius and tool radius 1 mm each.
+
+It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
+
+| Unit (median) | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd |
+|---|---|---|---|---|---|---|---|
+| σ(γ), total | 0.033 | 0.041 | 0.039 | 0.035 | 0.038 | 0.050 | 0.055 |
+| from the mud slowness | 0.026 | 0.035 | 0.034 | 0.032 | 0.034 | 0.047 | 0.052 |
+| from the dipole | 0.014 | 0.015 | 0.012 | 0.010 | 0.011 | 0.010 | 0.011 |
+| from the Stoneley | 0.008 | 0.010 | 0.009 | 0.008 | 0.008 | 0.010 | 0.011 |
+
+- **The mud slowness dominates, as the plan expected.** Its effect grows in fast rock, where
+  S_T² − S_f² is small.
+- **In the fast sands and the Snadd, σ(γ) ≈ 0.04–0.055.** That is as large as γ itself, so
+  sonic γ there is only an upper-bound indicator.
+- **In the overburden shales (γ ≈ 0.3) it is well resolved.** Those are the units where the
+  article needed the anisotropy.
 
 ## WP5 results (synthetic well; `python examples/wp5_walkaway.py`, about 45 s)
 
@@ -587,92 +697,81 @@ the mud calibrated in the Stø, upscaled to 40 m with C66 arithmetic and C44 har
   and δ that absorb Vs0). A 10 % error in the Vs0 prior shifts ε by more than half its σ with
   polarization, and by less than a tenth without.
 
-## WP4 results (synthetic well; `python examples/wp4_sonic_anisotropy.py`, about 50 s)
+## WP6 results (synthetic well; `python examples/wp6_imaging.py`, about 90 s)
 
-**The data.**
+**The experiment (the article's Fig. 3).**
 
-- **Stoneley log:** "measured" at 500 Hz with a rigid 46 mm-radius tool, in mud of 1540 m/s and
-  1250 kg/m³ (assumption 15). It is computed with the exact TI borehole mode in the Backus
-  average of the model over a 1.8 m array, with 0.3 % noise.
-- **Borehole:** the bit radius is 108 mm. Washouts enlarge it by up to about 10 % in the
-  overburden shales, and the caliper reads it with 1 mm noise.
-- **Processing:** assumes a mud velocity of 1500 m/s unless the mud is calibrated.
-- **Truth:** γ of the Backus medium over the same 1.8 m.
+- **Data:** point-source CMP gathers from the reflectivity method (WP2), offsets 100–1500 m,
+  explosion at 6 m and hydrophones at 8 m, a 30 Hz Ricker source, Born primaries without free
+  surface or converted waves. The "observed" gather has the model's Q; the "elastic synthetic"
+  has none and is the reference.
+- **Processing:** the direct wave and the seabed reflection are muted. The seabed reflection
+  crosses the Stø reflection at about 1150 m of offset (54°), so the AVA uses offsets up to
+  850 m (44°). All variants are migrated with an 80 Hz high cut and gain limit 10.
+- **Migration models:** 20 m Backus averages of the well model. The VTI model has the true ε and
+  δ. The isotropic models use either the vertical Vp0, which ties the well, or the NMO velocity
+  Vp0 √(1 + 2δ), which flattens near-offset gathers as an isotropic velocity analysis would.
+- **Score:** the Stø-top AVA against the reference. Intercept A and gradient B (A + B sin²θ over
+  20–44°), and the RMS misfit of the AVA curve relative to its RMS.
 
-**The Stoneley wave is leaky in the overburden shales.** In the Lower Cretaceous shale and
-the Hekkingen, the tube wave is faster than the shear wave travelling along the borehole: it is
-controlled by C66 (γ ≈ 0.3), the shear wave by C44 (Vs0 ≈ 950–1050 m/s). The Stoneley wave
-therefore radiates shear energy into the formation.
+**Kinematics at the Stø top.** The overburden is strongly anelliptic. Fitting the exact
+layered-VTI times with the Alkhalifah & Tsvankin (1995) equation gives η ≈ 0.19–0.23 and
+V_nmo ≈ 1820 m/s, with errors of at most 0.71 ms out to offset/depth 2.
 
-Slowness relative to the tube wave, unit averages:
+- **The NMO-velocity isotropic model** images the Stø 16 m too deep (688 m). Its errors at the
+  reflector are +7 ms and +7° at 45°.
+- **The vertical-Vp0 isotropic model** ties the depth but is +16 ms and +9° off at 45°.
 
-| Unit | 500 Hz | 1 kHz | radiation 1/Q at 500 Hz | at 500 Hz, ε = δ = 0 | at 500 Hz, isotropic with μ = C66 |
+| variant | Stø pick depth (m) | moveout 20→44° (m) | A / A_ref | B / B_ref | AVA misfit |
 |---|---|---|---|---|---|
-| Lower Cretaceous shale (leaky) | 1.0188 | 1.0596 | 0.0099 | 1.0205 | 1.0077 |
-| Hekkingen (leaky) | 1.0138 | 1.0398 | 0.0034 | 1.0157 | 1.0049 |
-| Stø | 1.0007 | 0.9983 | 0 | 1.0007 | 1.0004 |
-| Fruholmen | 1.0000 | 0.9972 | 0 | 1.0000 | 0.9995 |
+| reference: elastic data, VTI migration | 667.9 | +0.7 | 1.00 | 1.00 | 0 |
+| VTI, no Q compensation | 667.1 | −1.6 | 0.65 | 0.24 | 0.53 |
+| **VTI + Q compensation** | 667.9 | +0.5 | **1.02** | **0.96** | **0.014** |
+| VTI + phase-only Q | 667.8 | +0.3 | 0.66 | 0.23 | 0.53 |
+| VTI + Q compensation, Q 30 % too low | 668.3 | +1.0 | 1.22 | 1.58 | 0.37 |
+| isotropic (NMO v), no Q compensation | 682.8 | −8.6 | 0.55 | 0.24 | 0.59 |
+| isotropic (NMO v) + Q compensation | 683.6 | −5.6 | 0.85 | 0.84 | 0.16 |
+| isotropic (vertical Vp0) + Q compensation | 667.7 | −11.9 | 0.69 | 0.88 | 0.24 |
 
-- **The leaky mode turns into a trapped one at about 1.2–2 kHz.** Near that transition the measured
-  slowness alone is ambiguous (see the notes), so the Stoneley wave is best analysed at
-  ≤ 500 Hz.
-- **The measured C44 matters more than the unknown C11 and C13.** At 500 Hz, the TI mode with
-  ε = δ = 0 is 0.2 % off. The usual isotropic substitute, which ignores the measured C44, is
-  1.1 % off. In slowness that error is amplified about 3.5 times in C66.
+- **The article's ranking is reproduced: anisotropic PSDM with Q compensation ties best**
+  (misfit 0.014). Isotropic PSDM with Q compensation comes next (0.16–0.24).
+- **Anisotropic PSDM without Q is much worse here than the article's "OK"** (misfit 0.53,
+  gradient 24 % of the reference). Overburden Q of 40–60 removes 35 % of the intercept and most
+  of the gradient: t\* grows from 5 to 7 ms across 20–44°. So either the real overburden
+  attenuates less than this synthetic, or the article's "OK" is generous. Phase-only
+  compensation fixes the timing (the event moves 0.7 m) but not the amplitudes.
+- **Q compensation is as sensitive to Q as anisotropy is to ε and δ.** A Q model 30 % too low
+  (an apparent instead of an intrinsic Q, for example) overshoots the gradient by 58 % and the
+  intercept by 22 %. This is the double-counting risk of the plan's critical point 4.
+- **The isotropic NMO-velocity image** has the right intercept to 15 % after Q compensation,
+  but it is 16 m too deep. It also curves 6 m between 20° and 44° (residual moveout from η), and
+  the angles it assigns are up to 7° too large.
+- **The Stø-top amplitude is not the Fuglen/Stø interface's.** The stringers 11 and 24 m above
+  tune it: the single-interface coefficient on the same scale has 57 % of the intercept and
+  89 % of the gradient. An interface-based AVA interpretation must model the whole stack (WP7).
 
-![Stoneley dispersion](docs/figures/wp4_dispersion.png)
+![Migrated gathers](docs/figures/wp6_gathers.png)
 
-**The processing ladder.** Each step adds one correction. Errors are the γ estimate minus the
-true sonic-scale γ, as unit means:
+**True amplitude and the Q operators** (checks in the example and the tests):
 
-| Step | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd | RMS |
-|---|---|---|---|---|---|---|---|---|
-| true γ | 0.267 | 0.303 | 0.159 | 0.023 | 0.095 | 0.063 | 0.122 | |
-| A tube wave, no tool, nominal mud, bit size | −0.167 | −0.144 | −0.096 | −0.059 | −0.078 | −0.039 | −0.045 | 0.088 |
-| B + tool term | −0.034 | +0.003 | +0.028 | +0.044 | +0.036 | +0.078 | +0.083 | 0.092 |
-| C + caliper | −0.050 | −0.019 | +0.020 | +0.044 | +0.036 | +0.077 | +0.083 | 0.092 |
-| D + dispersion (exact TI mode, ε = δ = 0) | +0.006 | +0.027 | +0.034 | +0.045 | +0.044 | +0.077 | +0.084 | 0.093 |
-| D′ as D, isotropic substitute | −0.030 | −0.007 | +0.025 | +0.043 | +0.038 | +0.073 | +0.078 | 0.088 |
-| E + dipole C44 moved to 500 Hz, matched resolution | +0.053 | +0.065 | +0.068 | +0.058 | +0.061 | +0.095 | +0.104 | 0.104 |
-| F + mud calibrated in the Stø, assumed isotropic (1563 m/s) | −0.012 | −0.010 | −0.027 | −0.023 | −0.024 | −0.035 | −0.041 | 0.045 |
-| **G as E with the true mud (1540 m/s)** | **+0.009** | **+0.014** | **+0.003** | **+0.003** | **+0.003** | **+0.004** | **+0.003** | **0.029** |
+- **Spreading:** migrated amplitude ÷ exact plane-wave R is constant to 0.7 % over 20–44°.
+  The interface is a single Fuglen/Stø contact, with no Q. The scale is the source and
+  wavelet constant.
+- **Q compensation in migration:** in the tests, it reproduces the no-Q amplitudes to 1 %
+  below 25° and to 3 % up to 35°.
+  - The small remaining under-compensation comes from the first-order (in 1/Q) operator, and
+    from the modelling's shear Q, which also attenuates oblique P waves.
+  - The direct wave and the seabed reflection must be muted first. Otherwise the inverse filter
+    rings near the high cut and leaks their energy, which is 3–100 times larger, onto the
+    target.
+- **Gain limit:** with an 80 Hz high cut, the AVA misfit falls from 0.22 (gain 2) to 0.016
+  (gain 10) and then levels out. With noise at 5 % and 20 % of the signal RMS, it levels out at
+  0.028 and 0.15.
+  - The high cut and the gain limit are two forms of the same regularization. Beyond a gain
+    of about 10 the noise, not the operator, sets the error.
+  - Cavalca et al.'s noise amplification is visible only without a high cut.
 
-- **The tool term is the largest single correction.** It raises γ by 0.10–0.15.
-- **With all corrections and the right mud slowness, every unit is within 0.014** (G). The
-  remaining RMS of 0.029 is noise and thin-bed spikes.
-- **The mud slowness decides the result.** A 2.7 % error (1500 against 1540 m/s) shifts γ by
-  +0.05 to +0.10 (E), more than every other correction. It also hides whether the other
-  corrections are right: D and E look worse than C only because the mud error dominates.
-- **Calibrating the mud in the Stø under the assumption that it is isotropic** gives 1563 m/s:
-  its true γ is 0.023. The result is then γ errors of −0.01 to −0.04. In a real well the
-  Stø is permeable, which would also raise its Stoneley slowness (Winkler et al., 1989) and
-  bias such a calibration further.
-
-![Sonic gamma](docs/figures/wp4_gamma.png)
-
-**The uncertainty budget.** Linear propagation for the final processing, with 1σ input
-errors:
-
-- mud slowness 2 %, mud density 1 %;
-- Stoneley slowness 0.3 %, dipole slowness 1 %;
-- density 15 kg/m³;
-- radius and tool radius 1 mm each.
-
-It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
-
-| Unit (median) | L. Cret. | Hekkingen | Fuglen | Stø | Nordmela | Fruholmen | Snadd |
-|---|---|---|---|---|---|---|---|
-| σ(γ), total | 0.033 | 0.041 | 0.039 | 0.035 | 0.038 | 0.050 | 0.055 |
-| from the mud slowness | 0.026 | 0.035 | 0.034 | 0.032 | 0.034 | 0.047 | 0.052 |
-| from the dipole | 0.014 | 0.015 | 0.012 | 0.010 | 0.011 | 0.010 | 0.011 |
-| from the Stoneley | 0.008 | 0.010 | 0.009 | 0.008 | 0.008 | 0.010 | 0.011 |
-
-- **The mud slowness dominates, as the plan expected.** Its effect grows in fast rock, where
-  S_T² − S_f² is small.
-- **In the fast sands and the Snadd, σ(γ) ≈ 0.04–0.055.** That is as large as γ itself, so
-  sonic γ there is only an upper-bound indicator.
-- **In the overburden shales (γ ≈ 0.3) it is well resolved.** Those are the units where the
-  article needed the anisotropy.
+![AVA after migration](docs/figures/wp6_ava.png)
 
 ## Assumptions
 
@@ -750,6 +849,20 @@ It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
 22. **Priors:** Vp0 from the ZO-VSP with 1 % error, Vs0 from the dipole log with 5 % error. The
     γ → (ε, δ) relation is a straight line with Gaussian priors N(0, 0.1²) on the intercept and
     N(0.5, 2²) on the slope.
+23. **Imaging is 1D** (WP6): a CMP gather over a laterally homogeneous earth, migrated offset by
+    offset with stationary-phase (true-amplitude) weights. This keeps the Fig. 3 experiment;
+    2D/3D aperture, dip and migration noise are not modelled (plan, critical point 7).
+24. **The Q operator is first order in 1/Q and isotropic.** One P-wave Q per layer acts along
+    the whole ray. The reflectivity modelling also lets the shear Q act on oblique P waves.
+    The difference is at most 2–3 % in amplitude at 35°.
+25. **The "observed" data are noise-free Born primaries without free surface** (WP6): no ghosts,
+    no multiples, no converted waves. Interbed multiples and the free surface are WP7's subject.
+    The migration models are 20 m Backus averages of the true model; WP7 will use the
+    estimated ones (ZO-VSP Q, walkaway ε and δ).
+26. **AVA conventions** (WP6): amplitudes are trough picks on the migrated gather, followed
+    across offsets. The angle is that of the migration model at the picked depth. The fits use
+    20–44°: the 3D data in the article start at 20°, and beyond 44° the seabed reflection
+    approaches the reservoir.
 
 ## Notes found while implementing
 
@@ -801,6 +914,15 @@ It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
 - **A single missing pick must not void the whole p measurement** (WP5): the dense window
   operator propagated one NaN to every source. Missing picks now void only the windows that use
   them.
+- **Mute strong shallow events before Q compensation** (WP6). The stabilized inverse filter
+  rings near the high cut, and the direct wave and the seabed reflection, 3–100 times stronger
+  than the target, leaked into the reservoir AVA as 4 % wiggles until they were muted.
+- **The angle of a migration table belongs to the layer above each depth** (WP6). On a sharp
+  interface, a pick 0.3 m below it reads the transmitted angle, and R(θ) checks then fail by
+  15 %. Smooth migration models avoid this.
+- **The seabed reflection limits the reservoir AVA to about 45°** (WP6). In 417 m of water the
+  seabed reflection crosses the Stø reflection at about 1150 m of offset (54°). A shallow
+  reservoir under deep water loses its far angles to it, not only to the acquisition.
 - **The plan's WP1 check "Backus averaging of isotropic layers gives ε ≥ 0" was wrong.** The test
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
@@ -817,7 +939,9 @@ iwt/
   synthetic.py    the Wisting-like true model, its wireline logs, caliper and Stoneley logs
   calibration.py  drift curve; knee and physical sonic calibration; gamma -> (eps, delta) calibration
   sonic.py        C33, C44, C66 and gamma; tube wave with tool; exact TI Stoneley mode; uncertainty
-  raytrace.py     exact qP phase velocity, slowness, polarization; two-point rays in layered VTI
+  raytrace.py     exact qP phase and group velocity, slowness, polarization; direct and reflected rays
+  imaging.py      constant-Q operators, gain-limited inverse Q; Q-compensated CMP depth migration
+  avo.py          event tracking on migrated gathers; intercept-gradient fits
   plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
@@ -833,7 +957,8 @@ examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-V
 examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; docs/figures/wp3_*.png
 examples/wp4_sonic_anisotropy.py    Stoneley dispersion, gamma processing ladder, uncertainty; wp4_*.png
 examples/wp5_walkaway.py            walkaway eps and delta, checks, gamma calibration; wp5_*.png
-tests/            pytest suite (128 tests)
+examples/wp6_imaging.py             moveout, Q-compensated migration variants (Fig. 3), gain limit; wp6_*.png
+tests/            pytest suite (143 tests)
 docs/             implementation plan and figures
 References/       the article (PDF)
 ```
@@ -843,6 +968,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 ## References
 
 * Aki, K., & Richards, P. G. (1980). *Quantitative Seismology: Theory and Methods*. W. H. Freeman.
+* Alkhalifah, T., & Tsvankin, I. (1995). Velocity analysis for transversely isotropic media. *Geophysics*, 60(5), 1550–1566. https://doi.org/10.1190/1.1443888
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
 * Banik, N. C., Lerche, I., & Shuey, R. T. (1985). Stratigraphic filtering, Part I: Derivation of the O'Doherty–Anstey formula. *Geophysics*, 50(12), 2768–2774. https://doi.org/10.1190/1.1441897
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
@@ -883,6 +1009,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Tsvankin, I. (2012). *Seismic Signatures and Analysis of Reflection Data in Anisotropic Media* (3rd ed.). SEG. https://doi.org/10.1190/1.9781560803003
 * Valero, H.-P., Djikpesse, H. A., & Sinha, B. K. (2009). Estimation of borehole fluid slowness using sonic array waveforms. *SEG Technical Program Expanded Abstracts 2009*, 361–365. https://doi.org/10.1190/1.3255617
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435
+* Wang, Y. (2002). A stable and efficient approach of inverse Q filtering. *Geophysics*, 67(2), 657–663. https://doi.org/10.1190/1.1468627
 * White, J. E. (1983). *Underground Sound: Application of Seismic Waves*. Elsevier.
 * White, J. E., & Tongtaow, C. (1981). Cylindrical waves in transversely isotropic media. *Journal of the Acoustical Society of America*, 70(4), 1147–1155. https://doi.org/10.1121/1.386946
 * White, R. E., & Simm, R. (2003). Tutorial: Good practice in well ties. *First Break*, 21(10). https://doi.org/10.3997/1365-2397.21.10.25640
@@ -890,4 +1017,4 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The plan lists further references for WP6–WP8.
+DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The WP6 references (Alkhalifah & Tsvankin, 1995; Wang, 2002; Cavalca et al., 2013) are those of the plan, checked there by DOI. The plan lists further references for WP7–WP8.
