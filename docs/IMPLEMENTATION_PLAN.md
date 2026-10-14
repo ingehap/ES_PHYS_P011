@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1–WP6 implemented** (see the README); WP7–WP8 to do. This document says what will be built, in what
+Status: **WP1–WP7 implemented** (see the README); WP8 to do. This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -375,7 +375,39 @@ reservoir AVA gradient against the elastic synthetic, scored numerically.
   accuracy;
 - Q compensation of a forward-attenuated spike recovers it up to the gain limit.
 
-### WP7: Integration, AVO, multiples and the figures
+### WP7: Integration, AVO, multiples and the figures (done)
+
+*As built:* `iwt.welltie`, `iwt.workflow`, `iwt.multiples`, `iwt.avo.linear_resolution`,
+`iwt.synthetic.dipping_reservoir_models` and `examples/reproduce_paper.py`, which runs the whole
+loop (logs → ZO-VSP → walkaway → surface seismic) on estimated models only and writes
+`docs/discrepancy_register.md`. Changes from the plan:
+
+- **The predictions are full-waveform reflectivity, not ray-Born synthetics.** A ray-Born
+  gather in a smoothed background was built and dropped: beyond about 27° it loses the
+  cancellation between the tops and bases of the thin fast stringers, and the reservoir AVA
+  went wrong by tens of per cent.
+- **Tie metrics use the complex cross-correlation of the analytic signals.** A real
+  cross-correlation trades a constant phase rotation for a time shift. The envelope peak gives
+  the shift; its phase gives the rotation (White & Simm, 2003).
+- **The "observed" surface data are the full-physics response of the true earth** (internal
+  multiples, mode conversion, Q), without free surface (assumed deghosted and free-surface
+  demultipled). The contamination is measured after identical migration against the Born
+  primaries. It grows with offset and needs mode conversion: without it, the P-wave interbed
+  multiples are small. With it, the converted primaries and the multiples largely cancel, so
+  switching physics off does not split the contamination further.
+- **The Vs scenarios (Fig. 4) are tested on contamination-free (Born) data**, as an ideal
+  demultiple would provide. On synthetic data the truth can also be swapped into the model one
+  part at a time, which attributes the remaining misfit; field data cannot do this, so the
+  identifiability study (section 5) is run on the same residual.
+- **Acceptance criteria:** the AVA criterion uses 20–44°, not 30–50°, because the seabed
+  reflection crosses the reservoir at about 54° (WP6).
+- **The Fig. 5 analogue is a zero-offset section of 1D columns** (a dipping wedge and a flat
+  contact), imaged column by column. Its fluid signal (oil section minus brine section) is
+  scored by depth and thickness. 2D migration is not modelled, so Q compensation can only
+  sharpen, not focus.
+- **Not built:** hold-out validation across data families and Monte Carlo ensembles over the
+  WP4/WP5 posteriors (both still recommended), and free-surface multiples.
+
 
 **Builds:**
 

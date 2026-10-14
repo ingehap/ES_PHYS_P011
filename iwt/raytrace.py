@@ -269,6 +269,17 @@ def reflection_table(model: ElasticModel1D, depths, offsets, z_source: float = 0
     p_lim = np.where(legs > 0, np.sin(th_max) / qp_phase_velocity(th_max, *A), np.inf)
     k_out = np.searchsorted(m.interfaces, z_out)          # layers [0, k) lie above z_out
     n_lay = int(k_out.max())
+    if not np.any(x > 0.0):                               # zero offset: vertical sums, exact
+        q, _, d2q = qp_vertical_slowness(0.0, *A[:, :n_lay], derivative=2)
+        w = legs[:n_lay] * h[:n_lay]
+        T = np.concatenate([[0.0], np.cumsum(w * q)])[k_out]
+        ts = np.concatenate([[0.0], np.cumsum(w * q * qinv[:n_lay])])[k_out]
+        dX = np.concatenate([[0.0], np.cumsum(-w * d2q)])[k_out]
+        i_s = int(np.searchsorted(m.interfaces, zs, side="right")) - 1
+        q_s = qp_vertical_slowness(0.0, *A[:, i_s])
+        one = np.ones((1, x.size))
+        return ReflectionTable(z_out, x, T[:, None] * one, 0.0 * T[:, None] * one,
+                               0.0 * T[:, None] * one, ts[:, None] * one, (q_s * dX)[:, None] * one)
     p_cap = np.minimum.accumulate(p_lim[:n_lay])          # smallest limit above each depth
     i_src = int(np.searchsorted(m.interfaces, zs, side="right")) - 1
 

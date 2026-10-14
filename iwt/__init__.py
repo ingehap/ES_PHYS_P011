@@ -17,11 +17,15 @@ work package 4 Thomsen's gamma from the sonic logs (:mod:`iwt.sonic`), work
 package 5 exact qP ray tracing (:mod:`iwt.raytrace`), the walkaway VSP inversion
 (:mod:`iwt.vsp.walkaway`) and the gamma -> (eps, delta) calibration, and work
 package 6 Q-compensated depth migration of CMP gathers (:mod:`iwt.imaging`) with
-AVA extraction (:mod:`iwt.avo`).
+AVA extraction (:mod:`iwt.avo`), and work package 7 the integrated loop: well-tie
+metrics (:mod:`iwt.welltie`), versioned models and the discrepancy register
+(:mod:`iwt.workflow`) and the contamination by multiples and mode conversion
+(:mod:`iwt.multiples`).
 Plotting (:mod:`iwt.plotting`) needs matplotlib.
 """
 
-from . import avo, calibration, imaging, paper, qmodel, raytrace, rockphysics, sonic
+from . import (avo, calibration, imaging, multiples, paper, qmodel, raytrace, rockphysics,
+               sonic, welltie, workflow)
 from .model import (
     ElasticModel1D,
     Stiffness,
@@ -34,17 +38,20 @@ from .model import (
 )
 from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "avo",
     "calibration",
     "imaging",
+    "multiples",
     "paper",
     "qmodel",
     "raytrace",
     "rockphysics",
     "sonic",
+    "welltie",
+    "workflow",
     "ElasticModel1D",
     "Stiffness",
     "backus_average",

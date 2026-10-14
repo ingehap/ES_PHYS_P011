@@ -4,7 +4,9 @@
 offset), taking the extreme of a fixed polarity in a window that moves with the
 event, so residual moveout from a wrong migration model is tracked rather than
 cut.  :func:`intercept_gradient` fits the two-term form ``R = A + B sin^2(theta)``
-(Shuey, 1985) by least squares over an angle range.
+(Shuey, 1985) by least squares over an angle range.  :func:`linear_resolution`
+says which model changes such data can tell apart (the identifiability study of
+the plan): Gaussian linear inversion of the sensitivities with prior widths.
 
 References
 ----------
@@ -18,7 +20,8 @@ from typing import NamedTuple, Optional, Sequence
 
 import numpy as np
 
-__all__ = ["Pick", "pick_event", "AVAFit", "intercept_gradient"]
+__all__ = ["Pick", "pick_event", "AVAFit", "intercept_gradient", "Resolution",
+           "linear_resolution"]
 
 
 class Pick(NamedTuple):
@@ -109,3 +112,28 @@ def intercept_gradient(theta, amplitude, theta_range: Sequence[float] = (0.0, 90
     scale = 1.0 if sigma is not None else (r @ r) / max(n - 2, 1)
     cov = np.linalg.inv((G / s[:, None]).T @ (G / s[:, None])) * scale
     return AVAFit(float(coef[0]), float(coef[1]), cov, float(np.sqrt(np.mean(r * r))), n)
+
+
+class Resolution(NamedTuple):
+    """Linear (Gaussian) resolution of parameters by data: posterior std, data weight, correlation."""
+
+    posterior_std: np.ndarray
+    data_weight: np.ndarray
+    correlation: np.ndarray
+
+
+def linear_resolution(J, prior_std, data_cov) -> Resolution:
+    """What linearized data ``d = J m`` with covariance ``data_cov`` resolve about ``m``.
+
+    ``prior_std`` are the prior standard deviations of the parameters.  The
+    data weight ``1 - posterior variance / prior variance`` is near 0 for a
+    parameter the data cannot see; a correlation near +-1 between two
+    parameters means the data can explain a change of one by the other.
+    """
+    J = np.atleast_2d(np.asarray(J, dtype=float))
+    s = np.asarray(prior_std, dtype=float)
+    Cd = np.atleast_2d(np.asarray(data_cov, dtype=float))
+    H = J.T @ np.linalg.solve(Cd, J) + np.diag(1.0 / s ** 2)
+    C = np.linalg.inv(H)
+    sd = np.sqrt(np.diag(C))
+    return Resolution(sd, 1.0 - sd ** 2 / s ** 2, C / np.outer(sd, sd))

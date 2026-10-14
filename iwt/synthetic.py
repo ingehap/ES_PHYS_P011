@@ -63,6 +63,7 @@ __all__ = [
     "OWC_TVDSS",
     "STO_PHI",
     "wisting_like_model",
+    "dipping_reservoir_models",
     "synthetic_logs",
     "wisting_like_well",
     "WASHOUT",
@@ -256,6 +257,49 @@ def wisting_like_model(dz: float = paper.MODEL_SAMPLING, td: float = paper.TD_TV
     full = {name: np.concatenate([[getattr(w, name)], v]) for name, v in cols.items()}
     labels = np.concatenate([np.array([w.name], dtype=object), label])
     return ElasticModel1D(interfaces, label=labels, f_ref=f_ref, **full).validate()
+
+
+def dipping_reservoir_models(x, dip_deg: float = 1.2, wedge: str = "Hekkingen",
+                             td: float = 800.0, dz: float = paper.MODEL_SAMPLING,
+                             seed: int = 2016, f_ref: float = 30.0, oil: bool = True):
+    """Columns of a 2D section with a dipping reservoir and a flat oil-water contact.
+
+    The ``wedge`` unit thickens by ``x tan(dip_deg)`` (x in m), so everything
+    below it, stringers included, dips; the oil-water contact stays at
+    :data:`OWC_TVDSS`, so the oil column thins with x and disappears where top
+    Stø reaches the contact.  The wedge is an anisotropic shale, so an
+    isotropic velocity model mispositions the deeper events by an amount that
+    grows with x.  Returns one :class:`~iwt.model.ElasticModel1D` per x (down to
+    ``td``), with the same fine-scale fluctuation seed.  ``oil=False`` fills the
+    whole reservoir with brine (the reference for the fluid signal).
+    """
+    names = [u.name for u in WISTING_LIKE_UNITS]
+    k = names.index(wedge)
+    wedge_top = WISTING_LIKE_UNITS[k].top
+    out = []
+    for shift in np.asarray(x, dtype=float) * np.tan(np.radians(dip_deg)):
+        units = []
+        for j, u in enumerate(WISTING_LIKE_UNITS):
+            if j <= k:
+                units.append(u)
+            elif u is _STO_WATER:
+                water = replace(u, top=(max(OWC_TVDSS, _STO_OIL.top + shift) if oil
+                                        else _STO_OIL.top + shift))
+                units.append(water)
+            elif u is _STO_OIL:
+                if oil and u.top + shift < OWC_TVDSS - dz:
+                    units.append(replace(u, top=u.top + shift))
+            else:
+                units.append(replace(u, top=u.top + shift))
+        units.sort(key=lambda u: u.top)
+        below = units[units.index(water) + 1:]
+        if below and below[0].top <= water.top:
+            raise ValueError("the dip moves the base of the reservoir above the contact")
+        stringers = [replace(st, top=st.top + shift) if st.top > wedge_top else st
+                     for st in STRINGERS]
+        out.append(wisting_like_model(dz=dz, td=td, units=units, stringers=stringers,
+                                      seed=seed, f_ref=f_ref))
+    return out
 
 
 @dataclass

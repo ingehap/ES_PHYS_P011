@@ -18,8 +18,9 @@ The roadmap, assumptions, critical assessment and full reference list are in
 
 **Status:** work packages 1 (foundations), 2 (forward modelling), 3 (ZO-VSP processing, Q and
 the sonic calibration), 4 (sonic anisotropy), 5 (walkaway anisotropy and the γ → (ε, δ)
-calibration) and 6 (ray tracing and Q-compensated depth imaging, the Fig. 3 experiment) are
-implemented. WP7–WP8 (the integrated loop, real-data I/O) are still to do.
+calibration), 6 (ray tracing and Q-compensated depth imaging, the Fig. 3 experiment) and 7 (the
+integrated loop with its discrepancy register, multiples, the Fig. 2, 4 and 5 analogues) are
+implemented. WP8 (real-data I/O and a command line) is still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -135,6 +136,25 @@ gather = np.zeros((x.size, 1000))                                # data[offset, 
 image = imaging.migrate_cmp(gather, 0.001, x, mig, tab.depth, 6.0, 8.0, table=tab,
                             q_compensation="amplitude", gain_limit=10.0, high_cut=80.0)
 fit = avo.intercept_gradient(tab.theta[0], np.ones(x.size), (20.0, 44.0))   # A + B sin^2(theta)
+
+# the integrated loop: model versions, discrepancy register, tie metrics, multiples (WP7)
+from iwt import multiples, welltie, workflow
+from iwt.synthetic import SEA_WATER
+
+reg = workflow.Register()
+v0 = reg.new_version("logs", workflow.model_from_logs(logs, 417.5, SEA_WATER.vp0, SEA_WATER.rho),
+                     "sonic, dipole and density as logged")
+v1 = reg.new_version("ZO-VSP calibrated",                        # sonic moved to 30 Hz, gap from VSP
+                     workflow.model_from_logs(logs, 417.5, SEA_WATER.vp0, SEA_WATER.rho, qp=60.0,
+                                              qs=30.0, gap_vp=2130.0), "Q, dispersion, gap")
+reg.log("synthetic late against the corridor stack", "blind gap above the logs",
+        "fill the gap from the VSP", "shift 1 ms", "adopt", version=v1.number)
+reg.check("corridor stack vs synthetic, correlation", 0.93, 0.8, ">=")
+print(reg.to_markdown())                    # versions, discrepancies, criteria
+syn = normal_incidence(v1.model, 0.002, 600, wav)[1]
+m = welltie.tie_metrics(np.roll(syn, 2), syn, 0.002)            # correlation, shift, phase, scale, PEP
+g = multiples.gathers(v1.model.subset(0.0, 780.0), [300.0], 6.0, 8.0, 0.002, 600, wav, f_max=90.0)
+g.keys()                                    # full, primaries, no mode conversion, ..., Born primaries
 ```
 
 ## What WP1 provides
@@ -222,6 +242,19 @@ about 1400 slownesses) with `workers=4`.
 | Q-compensated depth migration | `iwt.imaging.migrate_cmp`, `Image` | 1D Kirchhoff-type prestack depth migration of a CMP gather with stationary-phase weights; per output point an inverse Q filter for its own t\* (ray-based, Cavalca et al., 2013); amplitude + phase or phase-only; common high-cut taper |
 | AVA | `iwt.avo.pick_event`, `intercept_gradient` | event tracking across a migrated gather (follows residual moveout); A + B sin²θ fit |
 | figures | `examples/wp6_imaging.py` | `docs/figures/wp6_*.png` |
+
+## What WP7 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| model from logs | `iwt.workflow.model_from_logs` | 0.5 m elastic model: sonic and dipole moved to the seismic frequency with Q (Kjartansson, 1979), ε, δ, γ and Q curves, the sea, a gap layer above the logs (velocity from the VSP if given) |
+| loop and register | `iwt.workflow.Register` | numbered model versions with their changes; discrepancy entries (observation, hypothesis, test, result, decision, version); acceptance criteria fixed before tuning; Markdown output |
+| well-tie metrics (Fig. 2) | `iwt.welltie.tie_metrics`, `estimate_wavelet`, `rotate_phase` | zero-lag and best correlation; time shift and constant phase from the complex cross-correlation of analytic signals; scale; PEP. Least-squares multi-trace wavelet (Walden & White, 1998) |
+| multiples and mode conversion | `iwt.multiples.gathers`, `PHYSICS`, `relative_rms` | the same CMP gather with physics switched off step by step (full; primaries with their mode conversions; no mode conversion; P-wave primaries; Born primaries) |
+| identifiability | `iwt.avo.linear_resolution` | Gaussian posterior of linearized parameters: posterior std, data weight, posterior correlation |
+| Fig. 5 section | `iwt.synthetic.dipping_reservoir_models` | columns with a wedge-shaped anisotropic shale, a dipping reservoir and a flat oil–water contact; an all-brine twin for the fluid signal |
+| exact PP in slowness | `iwt.modeling.reflection.exact_pp_slowness` | the VTI coefficient as a function of the horizontal slowness (complex beyond critical) |
+| the loop | `examples/reproduce_paper.py` | `docs/discrepancy_register.md`, `docs/figures/wp7_*.png` |
 
 ## The synthetic well
 
@@ -773,6 +806,176 @@ V_nmo ≈ 1820 m/s, with errors of at most 0.71 ms out to offset/depth 2.
 
 ![AVA after migration](docs/figures/wp6_ava.png)
 
+## WP7 results (synthetic well; `python examples/reproduce_paper.py`, about 6 min with 4 workers)
+
+**The loop.** One script runs the article's workflow (its Fig. 1) using estimated models only:
+logs, then the ZO-VSP, then the walkaway, then the surface seismic. The true earth is used for
+scoring. In the entries marked *synthetic only*, it also attributes misfits that field data
+could not attribute. Every model version, discrepancy and acceptance criterion is written to
+[`docs/discrepancy_register.md`](docs/discrepancy_register.md).
+
+| version | from | change |
+|---|---|---|
+| v0 | logs | sonic, dipole and density as logged (12 kHz, 2 kHz); isotropic; no Q |
+| v1 | + ZO-VSP | Vp moved to 30 Hz with the VSP intrinsic Q; Qs = Qp/2; the blind gap above the logs (417.5–470 m) filled from the VSP |
+| v2 | + walkaway | ε and δ from the sonic γ through the walkaway calibration |
+| (v3) | + "rock-physics" Vs | dipole Vs moved to 30 Hz with Qs = Qp/2: tested and rejected |
+
+**1. ZO-VSP (Fig. 2 analogue, left).**
+
+- **Intrinsic Q per block:** 46, 60, 123 and 72 (true 46, 59, 80 and 70). The thin Fruholmen
+  block (60 m) is the poorly constrained one.
+- **Drift (VSP minus integrated sonic):** 11.9 ms at 1650 m, 7.5 ms RMS. After the physical
+  calibration the residual is 0.22 ms RMS.
+- **Corridor stack against the v1 synthetic:** with the gap above the logs filled from the first
+  10 m of logs, the correlation is −0.06 and the shift 8 ms. With the VSP interval velocity in
+  the gap (2129 m/s; true 2067 m/s), the correlation is 0.93 (0.97 after the best shift and
+  rotation), the shift +1.3 ms and the phase +4°.
+- **The 52 m blind interval between the seabed and the first log controls the tie.** In this
+  synthetic, a model built from logs alone does not tie a reservoir 250 m below the seabed.
+
+**2. Anisotropy.**
+
+- **Walkaway ε** (true 40 m value) at 650, 690, 720, 770, 810 and 850 m: 0.145 (0.145),
+  0.060 (0.038), 0.082 (0.084), 0.049 (0.053), 0.103 (0.093) and 0.101 (0.102). δ is off by up
+  to 0.03.
+- **Calibration:** ε = 0.039 + 0.66 γ and δ = −0.007 + 0.49 γ.
+- **Unit means of the calibrated curves** (true values in brackets):
+  - δ is 0.035–0.04 too high in the shallow shales: Lower Cretaceous 0.117 (0.077) and
+    Hekkingen 0.135 (0.100);
+  - Hekkingen ε is too low: 0.230 (0.260).
+
+  Carrying the six-level calibration up into the overburden is an extrapolation, and this is
+  where it fails (plan, critical point 3).
+
+**3. Surface seismic (Fig. 2 right and Fig. 4 analogues).**
+
+- **The measurement** is the full-physics reflectivity response of the true earth, including
+  internal multiples, mode conversion and Q. Offsets run from 100 to 1000 m. There is no free
+  surface: the data are assumed deghosted and free-surface demultipled.
+- **Processing:** the measurement is migrated with v2 (20 m Backus, VTI, VSP Q compensation,
+  gain limit 10, 80 Hz high cut). It is compared with v2's elastic synthetic, processed the
+  same way without Q compensation.
+
+| criterion (fixed before tuning) | value | threshold | passed |
+|---|---|---|---|
+| VSP first-break residual after calibration | 0.22 ms | ≤ 1 ms | yes |
+| corridor stack vs synthetic, correlation | 0.93 | ≥ 0.8 | yes |
+| reservoir event time shift (near-offset tie) | 0.02 ms | ≤ 2 ms | yes |
+| Stø-top AVA gradient, contamination-free, \|predicted/measured − 1\| | 0.40 | ≤ 0.10 | **no** |
+| Stø-top AVA gradient, as acquired, \|predicted/measured − 1\| | 0.73 | ≤ 0.10 | **no** |
+
+- **The tie closes; the AVA does not.**
+  - **Near offsets (≤ 300 m):** correlation 0.87 (0.98 after the best rotation), no depth
+    shift, scale 0.96 and a residual phase rotation of +27°, which was not investigated
+    further.
+  - **As acquired**, the reservoir AVA is erratic beyond 25° (Fig. 4 analogue, top row). The
+    Stø misfit is 0.62 and the predicted/measured gradient 0.27; at Fruholmen they are 1.28 and
+    3.59. This reproduces the article's observation.
+
+![Well ties](docs/figures/wp7_tie.png)
+
+**4. Discrepancies.**
+
+- **Contamination: elastic, and growing with angle.**
+  - After identical migration, full − Born is 0.93 × Born in the Stø window and 1.53 ×
+    at Fruholmen. At offsets up to 300 m it is only 0.26 and 0.40.
+  - With mode conversion switched off, the P-wave interbed multiples are only 0.14 and
+    0.23 × Born. The large far-offset contamination appears only with mode conversion on,
+    so an acoustic (P-wave) demultiple would not repair this AVA.
+  - The switches cannot split it further. The primaries with their mode conversions differ
+    from Born by 1.35 × and 2.34 ×, and the multiples cancel most of that again. This
+    is the elastic counterpart of the O'Doherty & Anstey (1971) cancellation.
+  - "Converted waves" and "interbed multiples" are therefore not separate culprits here. The
+    article's interbed multiples are, in this synthetic, elastic multiples with converted legs.
+  - The remaining hypotheses are tested on contamination-free (Born) data, which is what an
+    ideal demultiple would deliver.
+- **"Rock-physics" Vs: rejected.** Moving the dipole Vs to 30 Hz (Qs = Qp/2) raises the
+  contamination-free Stø misfit from 0.141 to 0.164 and lowers Fruholmen's from 0.062 to
+  0.051, so it gives no overall improvement.
+  - The identifiability study below fits the Stø residual best with Vs +3 %, the opposite
+    sign to the physical dispersion correction.
+  - Fitting Vs to the AVA would therefore have produced a wrong "rock-physics Vs" that
+    absorbs errors made elsewhere.
+- **Model or processing? (synthetic only)**
+  - The true earth's own elastic prediction, processed like v2's, lies 2–14 % above the
+    measurement over 20–44° (mean misfit 0.088).
+  - Re-migrating the measurement with the true Q above the logs lowers the misfit to 0.056;
+    with the true Q everywhere it falls to 0.040. That is the floor set by the first-order Q
+    operator and the shear Q.
+  - The cause: the VSP has no receivers between the seabed and 450 m, so the Quaternary (true
+    Q 30) takes the first block's Q of 46. This leaves about 3 % of amplitude error at the
+    reservoir that no reservoir parameter should absorb.
+- **Can the model error be split one part at a time? (synthetic only) No.**
+  - Swapping parts of v2 into the true earth gives a Stø misfit of 0.40 with v2's ε and δ, and
+    0.23 with v2's Vp, Vs and ρ. With both parts (that is, v2 itself) it is 0.14.
+  - The cause: the 5 m-smoothed γ gives the isotropic calcite stringers the shale's
+    anisotropy, ε 0.13–0.15 and δ 0.06–0.07 instead of 0.
+  - On the sharp 4300 m/s stringers of the true earth, this lowers their critical angle from
+    about 40° to about 35°, and the predicted Stø amplitude collapses beyond about 33°.
+  - In v2 the stringers are also smoothed, by the log apertures (3800 m/s instead of 4300 m/s
+    for the 1 m stringer), so the two errors partly cancel.
+- **Identifiability: the reservoir AVA alone cannot choose between the article's
+  explanations.**
+  - The contamination-free Stø residual (measured/predicted − 1) is +13 % to +20 % over
+    20–38° and −12 % at 44°.
+  - Each candidate alone explains only part of it, leaving 56–94 % of its RMS: Vs below
+    +3.1 %, Vs above −4.5 %, ρ below −3.1 %, δ below −0.078, ε below −0.073, or a 20 % change
+    of the overburden Q.
+  - Fitted jointly, with 2 % noise per angle, the data constrain ρ below (data weight 0.89)
+    and the overburden Q (0.60). They barely constrain the Vs on either side (0.38 and 0.17)
+    and not δ (0.05).
+  - Vs below and the overburden Q correlate +0.59 in the posterior. The overburden Q, which
+    the true-earth test identifies as a real culprit here, trades off against the reservoir Vs.
+
+![AVA](docs/figures/wp7_ava.png)
+
+**5. Fig. 5 analogue.**
+
+- **The section:** zero-offset columns every 20 m over 1 km. The Hekkingen shale thickens at
+  1.2°, so the reservoir dips under a flat oil–water contact at 694.5 m and the oil column
+  thins from 22.5 to 1.5 m.
+- **The fluid signal** is the image of an oil section minus that of an all-brine twin (5 %
+  noise). Both are migrated with the 20 m Backus averages of the true
+  oil-section models.
+
+| imaging | fluid-signal depth (m) | half-max thickness (m) | peak / noise RMS |
+|---|---|---|---|
+| VTI + Q compensation | 683.9 | 43.2 | 13.6 |
+| VTI, no Q compensation | 681.3 | 44.6 | 16.7 |
+| isotropic (NMO velocity) + Q compensation | 700.8 | 45.2 | 13.8 |
+| isotropic (NMO velocity), no Q compensation | 698.0 | 46.5 | 16.7 |
+
+- **Anisotropy positions the fluid signal.** VTI places it inside the oil column (top Stø at
+  672–693 m, contact at 694.5 m). The isotropic NMO-velocity image puts it 17 m deeper, below
+  the contact.
+- **Q compensation hardly sharpens it here.** It thins the signal by only 3 %, and it costs
+  signal-to-noise (16.7 → 13.6) in 1D at zero offset.
+- **What this 1D test lacks.** The article's clearer contact (its Fig. 5) needs 2D/3D
+  migration, where restored high frequencies help focus a flat event against dipping ones.
+- **At 30 Hz the 2–22 m oil column is below tuning thickness everywhere,** so the contact
+  cannot be seen in the oil section itself (second panel below).
+
+![Fig. 5 analogue](docs/figures/wp7_section.png)
+
+**What WP7 says about the article.**
+
+1. **The time tie closes with the ZO-VSP alone,** once the blind interval above the logs is
+   filled from it. Anisotropy matters for depth positioning, here by 17 m.
+2. **The AVA cannot close without removing elastic contamination.** P-wave interbed multiples
+   alone are small here; with mode conversion the contamination reaches 1–2 × Born beyond
+   300 m. Elastic modelling and subtraction, or elastic inversion of the reservoir
+   interval, would be needed; an acoustic demultiple would not suffice.
+3. **A reservoir Vs change can stand in for an overburden Q error** (posterior correlation
+   +0.59). A "rock-physics Vs" is justified only by independent evidence, such as
+   dipole-dispersion analysis or a Vs from the walkaway shear arrivals, not by the AVA fit.
+4. **The parts of the model must share one resolution.** A better calibration would fit the
+   intrinsic γ → (ε, δ) relation so that the Backus average of the log model at the walkaway
+   scale (40 m) reproduces the walkaway ε and δ. Anisotropy would then be zeroed in log-flagged
+   stringers. The direct fit used here is the article's method.
+5. **The shallowest Q** (seabed to the first VSP receiver) needs its own constraint: the
+   source signature or the seabed multiples.
+
 ## Assumptions
 
 1. **"LFP article" means Lewis et al. (2016)**, the only article in [`References/`](References/).
@@ -856,13 +1059,35 @@ V_nmo ≈ 1820 m/s, with errors of at most 0.71 ms out to offset/depth 2.
     the whole ray. The reflectivity modelling also lets the shear Q act on oblique P waves.
     The difference is at most 2–3 % in amplitude at 35°.
 25. **The "observed" data are noise-free Born primaries without free surface** (WP6): no ghosts,
-    no multiples, no converted waves. Interbed multiples and the free surface are WP7's subject.
-    The migration models are 20 m Backus averages of the true model; WP7 will use the
-    estimated ones (ZO-VSP Q, walkaway ε and δ).
+    no multiples, no converted waves. The migration models are 20 m Backus averages of the true
+    model. WP7 adds internal multiples and mode conversion and uses the estimated models (ZO-VSP
+    Q, walkaway ε and δ).
 26. **AVA conventions** (WP6): amplitudes are trough picks on the migrated gather, followed
     across offsets. The angle is that of the migration model at the picked depth. The fits use
     20–44°: the 3D data in the article start at 20°, and beyond 44° the seabed reflection
     approaches the reservoir.
+
+27. **The WP7 surface "measurement" has no free surface and no noise** (deghosted and
+    free-surface demultipled). Noise is added only to the ZO-VSP, the walkaway and the Fig. 5
+    section. In 417.5 m of water the first seabed multiple arrives near 1.1 s, after the
+    reservoir, but peg-legs from the shallow section would add to the contamination.
+28. **Every estimated model uses Qs = Qp/2,** because the VSP gives only the P-wave Q. The model
+    takes the Q of the first VSP block between the seabed and the first receiver (450 m).
+29. **"Contamination-free" means the Born primaries:** an ideal demultiple that also removes
+    the transmission and conversion losses. A real demultiple keeps those losses, so its
+    output would also need amplitude balancing.
+30. **The identifiability Jacobian is linearized** around 8 m unit means on either side of the
+    Stø top, with the exact VTI interface coefficient. It ignores the tuning by the stringers.
+    The overburden-Q column is −π f t\*(θ) per relative change of Q, with f = 35 Hz and t\*
+    from the migration table. The prior standard deviations are assumed: Vs 3 %, ρ 2 %, ε and
+    δ 0.03, and Q 30 %.
+31. **The AVA acceptance criterion uses 20–44°, not the plan's 30–50°,** because the seabed
+    reflection crosses the reservoir at about 54° (WP6). The criteria were fixed before any
+    tuning and were not changed after the results.
+32. **The Fig. 5 section is imaged column by column at zero offset** with the 20 m Backus
+    averages of the true oil-section models. The isotropic variant uses the NMO velocity Vp0 √(1 + 2δ). The
+    contact is scored by the fluid signal (oil image minus brine image, without the noise
+    image), not by picking: a 2–22 m column at 30 Hz gives no separate contact event to pick.
 
 ## Notes found while implementing
 
@@ -927,6 +1152,29 @@ V_nmo ≈ 1820 m/s, with errors of at most 0.71 ms out to offset/depth 2.
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
   (Berryman et al., 1999). The plan and the tests now say so.
+- **Ray-Born synthetics fail for thin fast stringers beyond about 27°** (WP7). A ray-Born
+  gather in a smoothed background loses the cancellation between the tops and bases of thin
+  beds once they go post-critical, and the reservoir AVA was wrong by tens of per cent. The
+  predictions therefore use the full reflectivity method.
+- **A real cross-correlation mistakes a phase rotation for a time shift.** For a band-limited
+  wavelet a constant rotation φ looks like a shift of about φ/(2πf), about 3 ms per 30° at
+  30 Hz. The tie metrics use the
+  complex cross-correlation of the analytic signals: its envelope gives the shift and its
+  phase the rotation.
+- **The blind interval above the first log controls a shallow tie.** Filling the 52 m gap with
+  log velocities made the synthetic 8 ms late (correlation −0.06). The VSP interval velocity
+  fixed it (0.93).
+- **The contamination cannot be split into "multiples" and "converted waves" by switching
+  physics off** (WP7). Without mode conversion, P-wave multiples are small (0.11–0.34 × Born);
+  with it, the converted primaries and the multiples are each larger than their sum and
+  largely cancel. Switching mode conversion off is not a physical medium either: at far
+  offsets the P-only response loses the converted energy and gets none of it back. The
+  contamination is reported as full − Born, near and far.
+- **Swapping the truth in one part at a time does not attribute the misfit when the parts have
+  different resolutions** (synthetic only). The smoothed anisotropy curves give the stringers
+  shale anisotropy; that error is harmless on smoothed velocities and severe on sharp ones.
+- **The physical Vs correction and the AVA-fitted Vs have opposite signs** on this well. A Vs
+  tuned to the AVA would have absorbed the overburden Q error.
 
 ## Repository layout
 
@@ -941,7 +1189,10 @@ iwt/
   sonic.py        C33, C44, C66 and gamma; tube wave with tool; exact TI Stoneley mode; uncertainty
   raytrace.py     exact qP phase and group velocity, slowness, polarization; direct and reflected rays
   imaging.py      constant-Q operators, gain-limited inverse Q; Q-compensated CMP depth migration
-  avo.py          event tracking on migrated gathers; intercept-gradient fits
+  avo.py          event tracking on migrated gathers; intercept-gradient fits; linear resolution
+  welltie.py      wavelet estimation, phase rotation, tie metrics (correlation, shift, phase, PEP)
+  workflow.py     model from logs; model versions, discrepancy register, acceptance criteria
+  multiples.py    gathers with physics switched off step by step; relative RMS
   plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
@@ -958,8 +1209,9 @@ examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; doc
 examples/wp4_sonic_anisotropy.py    Stoneley dispersion, gamma processing ladder, uncertainty; wp4_*.png
 examples/wp5_walkaway.py            walkaway eps and delta, checks, gamma calibration; wp5_*.png
 examples/wp6_imaging.py             moveout, Q-compensated migration variants (Fig. 3), gain limit; wp6_*.png
-tests/            pytest suite (143 tests)
-docs/             implementation plan and figures
+examples/reproduce_paper.py         the integrated loop (WP7); register, Figs. 2, 4, 5 analogues; wp7_*.png
+tests/            pytest suite (154 tests)
+docs/             implementation plan, discrepancy register and figures
 References/       the article (PDF)
 ```
 
@@ -1008,6 +1260,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
 * Tsvankin, I. (2012). *Seismic Signatures and Analysis of Reflection Data in Anisotropic Media* (3rd ed.). SEG. https://doi.org/10.1190/1.9781560803003
 * Valero, H.-P., Djikpesse, H. A., & Sinha, B. K. (2009). Estimation of borehole fluid slowness using sonic array waveforms. *SEG Technical Program Expanded Abstracts 2009*, 361–365. https://doi.org/10.1190/1.3255617
+* Walden, A. T., & White, R. E. (1998). Seismic wavelet estimation: A frequency domain solution to a geophysical noisy input-output problem. *IEEE Transactions on Geoscience and Remote Sensing*, 36(1), 287–297. https://doi.org/10.1109/36.655337
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435
 * Wang, Y. (2002). A stable and efficient approach of inverse Q filtering. *Geophysics*, 67(2), 657–663. https://doi.org/10.1190/1.1468627
 * White, J. E. (1983). *Underground Sound: Application of Seismic Waves*. Elsevier.
@@ -1017,4 +1270,4 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The WP6 references (Alkhalifah & Tsvankin, 1995; Wang, 2002; Cavalca et al., 2013) are those of the plan, checked there by DOI. The plan lists further references for WP7–WP8.
+DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The WP6 references (Alkhalifah & Tsvankin, 1995; Wang, 2002; Cavalca et al., 2013) and the WP7 references (Walden & White, 1998; White & Simm, 2003; O'Doherty & Anstey, 1971; Kjartansson, 1979) are those of the plan, checked there by DOI. The plan lists further references for WP8.
