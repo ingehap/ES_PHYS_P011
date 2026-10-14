@@ -6,14 +6,17 @@ AVO analysis", 78th EAGE Conference & Exhibition,
 https://doi.org/10.3997/2214-4609.201601553, and of the methods of its references.
 See ``docs/IMPLEMENTATION_PLAN.md`` for the roadmap.
 
-Work package 1 (this release) provides the foundations: the published numbers
+Work package 1 provides the foundations: the published numbers
 (:mod:`iwt.paper`), the 1D elastic VTI model with attenuation
 (:mod:`iwt.model`), constant-Q dispersion (:mod:`iwt.qmodel`), Gassmann fluid
 substitution (:mod:`iwt.rockphysics`) and a synthetic Wisting-like well
-(:mod:`iwt.synthetic`).  Plotting (:mod:`iwt.plotting`) needs matplotlib.
+(:mod:`iwt.synthetic`).  Work package 2 adds forward modelling
+(:mod:`iwt.modeling`), work package 3 ZO-VSP processing and Q
+(:mod:`iwt.vsp`) and the sonic-to-seismic calibration (:mod:`iwt.calibration`).
+Plotting (:mod:`iwt.plotting`) needs matplotlib.
 """
 
-from . import paper, qmodel, rockphysics
+from . import calibration, paper, qmodel, rockphysics
 from .model import (
     ElasticModel1D,
     Stiffness,
@@ -26,9 +29,10 @@ from .model import (
 )
 from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
+    "calibration",
     "paper",
     "qmodel",
     "rockphysics",

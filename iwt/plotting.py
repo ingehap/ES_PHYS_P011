@@ -16,7 +16,7 @@ import numpy as np
 from .model import ElasticModel1D
 
 __all__ = ["unit_tops", "well_display", "backus_display", "avo_display", "gather_panels",
-           "PALETTE"]
+           "depth_profiles", "trace_columns", "PALETTE"]
 
 #: Categorical slots in fixed order, plus chart ink and chrome.
 PALETTE = {
@@ -252,4 +252,81 @@ def gather_panels(t, x, panels: dict, tmin: Optional[float] = None,
     cb.set_label("amplitude (same clip in every panel)", color=PALETTE["ink2"], fontsize=7)
     if title:
         fig.suptitle(title, fontsize=9.5, color=PALETTE["ink"], x=0.02, ha="left")
+    return fig
+
+
+def depth_profiles(panels: dict, top: Optional[float] = None, bottom: Optional[float] = None,
+                   tops=None, title: Optional[str] = None, width: float = 2.9):
+    """Depth tracks of curves: ``panels`` maps a panel title to ``(xlabel, {label: (x, z)})``.
+
+    Up to four curves per panel, told apart by colour and line style; depth
+    increases downward.  ``tops`` is ``[(depth, name), ...]``, drawn across
+    every track and named beside the last one.
+    """
+    plt = _plt()
+    n = len(panels)
+    fig, axes = plt.subplots(1, n, figsize=(width * n + 1.0, 6.0), sharey=True, squeeze=False)
+    fig.patch.set_facecolor(PALETTE["surface"])
+    axes = axes[0]
+    for ax, (name, (xlabel, curves)) in zip(axes, panels.items()):
+        for k, (lab, (x, z)) in enumerate(curves.items()):
+            ax.plot(x, z, color=PALETTE["series"][k], linestyle=_STYLES[k], linewidth=1.3,
+                    label=lab)
+        _style(ax, xlabel)
+        ax.set_title(name, fontsize=8.5, color=PALETTE["ink"], loc="left", pad=24)
+        _legend(ax)
+    if top is not None or bottom is not None:
+        axes[0].set_ylim(bottom, top)
+    else:
+        axes[0].invert_yaxis()
+    lo, hi = sorted(axes[0].get_ylim())
+    for z, name in (tops or []):
+        if lo < z < hi:
+            for ax in axes:
+                ax.axhline(z, color=PALETTE["axis"], linewidth=0.6, zorder=0)
+            axes[-1].annotate(name, (1.02, z), xycoords=("axes fraction", "data"), fontsize=6.5,
+                              color=PALETTE["ink2"], va="bottom", annotation_clip=False)
+    axes[0].set_ylabel("depth (m TVDSS)", color=PALETTE["ink2"], fontsize=8)
+    if title:
+        fig.suptitle(title, fontsize=9.5, color=PALETTE["ink"], x=0.02, ha="left")
+    fig.tight_layout()
+    return fig
+
+
+def trace_columns(t, traces: dict, tmin: Optional[float] = None, tmax: Optional[float] = None,
+                  marks: Optional[dict] = None, title: Optional[str] = None,
+                  ylabel: str = "two-way time (s)"):
+    """Single traces side by side, time downward: ``traces`` maps a label to ``(trace, scale)``.
+
+    Each trace is drawn as a line, divided by ``scale`` (use one scale for traces
+    that should be compared in amplitude).  ``marks`` maps a label to a time
+    drawn across every column.
+    """
+    plt = _plt()
+    t = np.asarray(t)
+    tmin = t[0] if tmin is None else tmin
+    tmax = t[-1] if tmax is None else tmax
+    sel = (t >= tmin) & (t <= tmax)
+    n = len(traces)
+    fig, axes = plt.subplots(1, n, figsize=(1.7 * n + 1.4, 6.0), sharey=True, squeeze=False)
+    fig.patch.set_facecolor(PALETTE["surface"])
+    axes = axes[0]
+    for k, (ax, (name, (tr, scale))) in enumerate(zip(axes, traces.items())):
+        x = np.asarray(tr)[sel] / scale
+        ax.plot(x, t[sel], color=PALETTE["series"][k % 4], linewidth=1.0)
+        ax.fill_betweenx(t[sel], 0.0, x, where=x > 0, color=PALETTE["series"][k % 4],
+                         alpha=0.35, linewidth=0)
+        ax.axvline(0.0, color=PALETTE["axis"], linewidth=0.6)
+        _style(ax, name)
+        ax.set_xlim(-1.1, 1.1)
+        for lab, y in (marks or {}).items():
+            ax.axhline(y, color=PALETTE["ink2"], linewidth=0.6, linestyle="--")
+            if ax is axes[-1]:
+                ax.annotate(lab, (1.04, y), xycoords=("axes fraction", "data"), fontsize=6.5,
+                            color=PALETTE["ink2"], va="center", annotation_clip=False)
+    axes[0].set_ylim(t[sel][-1], t[sel][0])
+    axes[0].set_ylabel(ylabel, color=PALETTE["ink2"], fontsize=8)
+    if title:
+        fig.suptitle(title, fontsize=9.5, color=PALETTE["ink"], x=0.02, ha="left")
+    fig.tight_layout()
     return fig

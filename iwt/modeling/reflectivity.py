@@ -60,7 +60,8 @@ from .elastic import (
 
 __all__ = ["Reflectivity", "Record", "time_axis_spectrum", "spectrum_to_trace"]
 
-_COMPONENTS = ("ux", "uz", "tzz", "pressure", "down_p", "up_p", "down_s", "up_s")
+_COMPONENTS = ("ux", "uz", "tzz", "pressure", "down_p", "up_p", "down_s", "up_s",
+               "uz_down", "uz_up")
 
 
 # -- 2x2 algebra on tuples of arrays ------------------------------------------------
@@ -340,8 +341,9 @@ class Reflectivity:
         (unit downgoing and upgoing P).  ``source_amplitude`` (nf, np) multiplies
         both.  Returns a dict of arrays (n_receivers, nf, np) for ``ux``, ``uz``,
         ``tzz`` (traction / (i omega)), ``pressure`` (fluid receivers; NaN in a
-        solid) and the wave amplitudes ``down_p``, ``up_p``, ``down_s``, ``up_s``
-        just below each receiver depth.
+        solid), the vertical displacement of the downgoing and upgoing waves
+        ``uz_down`` and ``uz_up``, and the wave amplitudes ``down_p``, ``up_p``,
+        ``down_s``, ``up_s`` just below each receiver depth.
         """
         omega = np.atleast_1d(np.asarray(omega, dtype=complex))
         p = np.atleast_1d(np.asarray(p, dtype=float))[None, :] + 0j
@@ -449,6 +451,8 @@ class Reflectivity:
                 tzz = D[..., 1, 0] * v_d[0] + D[..., 1, 1] * v_u[0]
                 out["ux"][k] = lay["alpha"] * p * (v_d[0] + v_u[0])
                 out["uz"][k] = uz
+                out["uz_down"][k] = D[..., 0, 0] * v_d[0]
+                out["uz_up"][k] = D[..., 0, 1] * v_u[0]
                 out["tzz"][k] = tzz
                 out["pressure"][k] = -1j * omega[:, None] * tzz
             else:
@@ -458,6 +462,8 @@ class Reflectivity:
                 tu = _vec(lay["Cu"], v_u)
                 out["ux"][k] = ud[0] + uu[0]
                 out["uz"][k] = ud[1] + uu[1]
+                out["uz_down"][k] = ud[1]
+                out["uz_up"][k] = uu[1]
                 out["tzz"][k] = (td[1] + tu[1]) * scale
         return out
 
@@ -470,8 +476,10 @@ class Reflectivity:
 
         ``wavelet`` is ``(t, w)`` (sampled, may be centred on t = 0); its spectrum
         is the source-potential time function.  ``component`` is ``"pressure"``
-        (receivers in the sea), ``"uz"`` (vertical displacement) or ``"ur"``
-        (radial displacement).
+        (receivers in the sea), ``"uz"`` (vertical displacement), ``"ur"``
+        (radial displacement), or the downgoing / upgoing parts of the vertical
+        displacement, ``"uz_down"`` and ``"uz_up"``.  These two are exact
+        wavefield separations, useful for testing VSP processing.
 
         The slowness integral is sampled uniformly in take-off angle phi at the
         source, ``p = sin(phi) / alpha``.  Then ``(p / q) dp = sin(phi) dphi /
@@ -523,7 +531,8 @@ class Reflectivity:
         W = wavelet_spectrum(wavelet[0], wavelet[1], omega)
         amp = (1j * omega[:, None] / v_src[:, None]) * (1j * omega[:, None]) \
             * (p[None, :] / q_src) * dp * tap[None, :] * W[:, None] / (4.0 * np.pi)
-        key = {"pressure": "pressure", "uz": "uz", "ur": "ux"}[component]
+        key = {"pressure": "pressure", "uz": "uz", "ur": "ux",
+               "uz_down": "uz_down", "uz_up": "uz_up"}[component]
         fields = self.plane_wave(omega, p, z_source, z_rec, source="explosion",
                                  source_amplitude=amp, workers=workers)[key]
         data = np.empty((z_rec.size, offsets.size, nt))

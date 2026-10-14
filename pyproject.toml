@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iwt"
-version = "0.2.0"
+version = "0.3.0"
 description = "Integrated borehole and surface seismic well tie (Lewis et al., 2016, 78th EAGE) in Python"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -23,7 +23,7 @@ all = ["matplotlib>=3.5", "lasio>=0.30"]
 dev = ["pytest>=7", "pyflakes>=2.4", "matplotlib>=3.5", "lasio>=0.30"]
 
 [tool.setuptools]
-packages = ["iwt", "iwt.modeling"]
+packages = ["iwt", "iwt.modeling", "iwt.vsp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

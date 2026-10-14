@@ -16,9 +16,9 @@ and of the methods of its three references:
 The roadmap, assumptions, critical assessment and full reference list are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-**Status:** work packages 1 (foundations) and 2 (forward modelling) are implemented. WP3–WP8
-(VSP processing and Q, sonic and walkaway anisotropy, Q-compensated imaging, the integrated loop,
-real-data I/O) are still to do.
+**Status:** work packages 1 (foundations), 2 (forward modelling) and 3 (ZO-VSP processing, Q
+and the sonic calibration) are implemented. WP4–WP8 (sonic and walkaway anisotropy,
+Q-compensated imaging, the integrated loop, real-data I/O) are still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -81,6 +81,20 @@ t, ang, gather = angle_gather(model, [0, 10, 20, 30], 0.002, 600, wav, method="e
 refl = Reflectivity(model.subset(0.0, 1000.0), attenuation=True, free_surface=False)
 rec = refl.record([100.0, 500.0], 6.0, [8.0], 0.002, 600, wav, "pressure", f_max=90.0, workers=4)
 rec.data                                   # [receiver, offset, time]
+
+# ZO-VSP processing, Q and the sonic calibration (WP3)
+from iwt import calibration
+from iwt.vsp import zovsp, attenuation
+
+depths = np.arange(450.0, 1650.1, 10.0)
+vsp = zovsp.synthetic_zovsp(model, depths, 6.0, 0.001, 1600, ricker(40.0, 0.001), f_max=150.0)
+pk = zovsp.pick_first_breaks(vsp.t, vsp.data)                   # tracked first-arrival peaks
+down, up = zovsp.separate_wavefields(vsp.t, vsp.data, pk)       # parametric up/down separation
+t30 = zovsp.phase_delay_times(vsp.t, down, 30.0, pk)            # traveltimes at 30 Hz
+f, S = attenuation.first_arrival_spectra(vsp.t, down, pk)
+dts = attenuation.centroid_shift(f, S, (10.0, 100.0))           # t* relative to 450 m
+q = attenuation.interval_q(depths, t30, dts, boundaries=[600.0, 740.0, 800.0])
+drift = calibration.drift(logs.depth, logs.vp, depths, t30)     # VSP minus integrated sonic
 ```
 
 ## What WP1 provides
@@ -118,6 +132,19 @@ off, which the multiple analysis needs. No 2D FD code was built.
 DᵀJD = [[0, N], [−N, 0]], so D⁻¹ needs no general solve. All 2×2 algebra is element-wise. The
 2524-layer model to 1000 m takes about 75 s per streamer gather (39 offsets, 108 frequencies,
 about 1400 slownesses) with `workers=4`.
+
+## What WP3 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| picking and time–depth | `iwt.vsp.zovsp.pick_first_breaks`, `vertical_times`, `phase_delay_times` | onset (envelope threshold) and peak picks; the peak is tracked on one lobe along the onset moveout; straight-ray offset correction; traveltime as the phase delay at a chosen frequency |
+| interval velocity | `interval_velocity` | blocked least squares, or Tikhonov-regularized with the smoothing chosen by the discrepancy principle (noise estimated from the data) |
+| up/down separation | `separate_wavefields` | parametric plane-wave fit in a sliding window (Seeman & Horowicz, 1983; default) or median / mean filter after alignment |
+| deconvolution, corridor stack | `deconvolve`, `corridor_stack` | Wiener deconvolution of the upgoing by the downgoing wavefield, zero-phase target wavelet, SEG polarity, two-way time; corridor or full stack |
+| synthetic ZO-VSP | `synthetic_zovsp`, `add_noise`, `VSP` | vertical-incidence reflectivity VSP; exact `uz_down` and `uz_up` components for testing |
+| Q | `iwt.vsp.attenuation` | first-arrival spectra; spectral ratio (Hauge, 1981); centroid shift, Gaussian closed form (Quan & Harris, 1997) and exact inversion; interval 1/Q by non-negative block least squares |
+| drift and calibration | `iwt.calibration` | sonic time, drift curve, classic knee calibration (slowness shift or scaling), Backus vertical velocity, physical calibration (Kjartansson dispersion + Backus + Thomsen anisotropy term) |
+| figures | `iwt.plotting.depth_profiles`, `trace_columns`; `examples/wp3_zovsp.py` | `docs/figures/wp3_*.png` |
 
 ## The synthetic well
 
@@ -238,7 +265,7 @@ The point-source integration was checked three ways:
 - **Seabed reflection:** it matches the image-source wave scaled by R(θ) to 2 %.
 - **Vertical attenuation:** it matches `iwt.qmodel` to 10⁻¹⁰.
 
-Interface scattering conserves energy and is reciprocal. 67 tests in all.
+Interface scattering conserves energy and is reciprocal. 67 tests in all at WP2.
 
 **AVO at the reservoir.** Unit Backus averages, with R at 0 / 20 / 40°:
 
@@ -282,12 +309,121 @@ contamination there needs moveout-corrected or migrated gathers (WP6/WP7).
 **Zero-offset VSP.** The source is 50 m from the well, with receivers at 450–900 m. The
 first-arrival peak comes 4–7 ms (median 5.6 ms) after the straight vertical traveltime at 30 Hz.
 
-Most of that delay comes from Q (a causal, attenuated pulse peaks late), with smaller
-contributions from the offset geometry and stratigraphic filtering. It adds to the dispersion
-drift of WP1. The pick convention (onset, peak or zero crossing) therefore matters at the
-millisecond level, which WP3 will address.
+*Corrected in WP3:* this delay is not caused by Q, as first written here. `Reflectivity.record`
+takes the source *potential* as its wavelet, so the recorded displacement is the time derivative
+of the Ricker wavelet, and the largest lobe of that derivative lies 5.57 ms from the centre for
+30 Hz. With a zero-phase displacement wavelet, Q moves the peak slightly *earlier* than the 30 Hz
+time (WP3 results). The pick convention still matters at the millisecond level, as WP3 shows.
 
 ![ZO-VSP](docs/figures/wp2_zovsp.png)
+
+## WP3 results (synthetic well; `python examples/wp3_zovsp.py`, about 15 s)
+
+**The data.** The "measured" ZO-VSP is a vertical-incidence reflectivity synthetic of the
+Wisting-like well (assumption 10):
+
+- source 6 m deep, with its ghost and the free surface;
+- receivers every 10 m from 450 to 1650 m;
+- 40 Hz zero-phase wavelet, Q on;
+- band-limited noise at 0.3 % of each trace's peak.
+
+The stratigraphic reference is an elastic (no-Q) synthetic of a 0.5 m model built from the
+*logs*: the 12 kHz sonic, the dipole and the density.
+
+**Pick conventions.** Over 450–1650 m, each traveltime is compared with the model's vertical time
+at 30 Hz:
+
+| Time | Difference over 1200 m |
+|---|---|
+| onset (10 % of the envelope) | −3.18 ms |
+| peak (tracked) | −0.71 ms |
+| phase delay at 30 Hz, downgoing wavefield | +0.68 ms |
+
+The onset travels at the high-frequency velocity and the peak at roughly the dominant-frequency
+velocity. Only the 30 Hz phase delay measures the time a 30 Hz tie needs. Its +0.68 ms is the
+layering delay; the Backus average of the logs predicts 0.91 ms over the logged interval.
+
+- **Noise.** The phase times have 0.09 ms of noise, estimated from their second differences.
+- **Interval velocity at 10 m.** Plain differencing has 124 m/s RMS error. The regularized
+  solution has 81 m/s, and part of that is real variability it smooths out.
+- **Unit velocities.** Blocked least squares recovers them to within 1.4 % for units of 60 m
+  or more, and to within 0.3–4.1 % for the 30–41 m units.
+
+**Separation, deconvolution and corridor stack.**
+
+- **Separation.** After the first arrival, the parametric separation leaves 0.14 of the exact
+  upgoing wavefield as error (noise-free data). A 9-trace median filter leaves 0.30.
+- **Corridor stack.** The 100 ms corridor stack, in SEG polarity at the sea-level datum,
+  correlates with the true Born primaries at **0.982**; the plan's acceptance criterion is 0.8.
+  The full stack, which includes the interbed multiples, correlates at 0.970. The corridor
+  amplitude is 0.79 of the Born amplitude.
+
+The figure shows the primaries *with* transmission loss alongside. They are far weaker at depth,
+which is the O'Doherty–Anstey effect again (WP2).
+
+![ZO-VSP](docs/figures/wp3_vsp.png)
+![Corridor stack](docs/figures/wp3_corridor.png)
+
+**Q: apparent, stratigraphic and intrinsic.** Values are 1/Q × 1000 per block, with the fit
+standard deviation in brackets:
+
+| Block (m) | 450–600 | 600–740 | 740–800 | 800–1650 |
+|---|---|---|---|---|
+| model (true intrinsic) | 21.96 | 17.01 | 12.50 | 14.29 |
+| apparent, spectral ratio | 26.58 (1.9) | 21.60 (2.0) | 9.4 (4.3) | 15.23 (0.2) |
+| intrinsic, spectral ratio | 23.68 (1.8) | 18.34 (2.0) | 3.3 (4.2) | 14.03 (0.2) |
+| apparent, centroid shift | 23.74 (0.9) | 16.09 (1.0) | 11.6 (2.0) | 15.41 (0.1) |
+| **intrinsic, centroid shift** | **21.84 (0.5)** | **16.64 (0.6)** | 8.2 (1.2) | **13.90 (0.1)** |
+
+- **The stratigraphic correction works.** Stratigraphic filtering makes the spectral-ratio Q
+  21–27 % too attenuating in the upper blocks. Subtracting t* from the log-model synthetic brings
+  the centroid-shift estimate within 0.5–2.7 % of the model in every block of 140 m or more.
+- **The 60 m Fruholmen block is not resolved.** Its t* change is about 0.25 ms.
+- **The centroid shift is the robust estimator here.** At 1 % noise its intrinsic Q stays within
+  2.5–8 % in the three resolved blocks. Its error bars are about 4.5 times smaller than the
+  spectral ratio's, which grow threefold between 0.3 % and 1 % noise.
+- **The stratigraphic part depends on the band and the estimator,** because stratigraphic
+  filtering is not constant-Q. Apparent and stratigraphic t* must therefore be measured with the
+  same windows, band and estimator.
+
+![Q](docs/figures/wp3_q.png)
+
+**Drift and calibration.** The drift is the VSP time minus the integrated 12 kHz sonic, tied at
+470 m:
+
+| Drift at | 600 m | 800 m | 1200 m | 1650 m |
+|---|---|---|---|---|
+| onset picks | 1.76 | 3.55 | 5.83 | 8.14 ms |
+| peak picks | 2.17 | 4.25 | 7.32 | 10.51 ms |
+| 30 Hz phase delays | 2.62 | 4.83 | 8.36 | 11.89 ms |
+| intrinsic dispersion alone | 2.15 | 4.21 | 7.55 | 11.07 ms |
+
+The pick convention alone changes the drift at TD by 30 % (8.1 against 11.9 ms).
+
+Residual drift after calibration, against the 30 Hz phase delays:
+
+| Calibration | RMS | At 1650 m |
+|---|---|---|
+| knee (knees at 600, 740, 800 m), fitted to the drift | 0.10 ms | −0.12 ms |
+| model Q + Backus (40 m) | 0.12 ms | −0.10 ms |
+| **intrinsic VSP Q (spectral ratio) + Backus** | **0.13 ms** | **+0.02 ms** |
+| **intrinsic VSP Q (centroid) + Backus** | **0.22 ms** | **+0.28 ms** |
+| apparent VSP Q (centroid) + Backus | 0.38 ms | −0.71 ms |
+| apparent VSP Q (spectral ratio) + Backus | 1.02 ms | −1.40 ms |
+| apparent VSP Q (spectral ratio), no Backus | 0.34 ms | −0.46 ms |
+
+- **The physical calibration explains the 11.9 ms drift to 0.1–0.3 ms RMS** with no parameter
+  fitted to the drift: Q comes from the VSP amplitudes and the layering term from the logs. It
+  is almost as good as the fitted knee correction. The knee correction cannot say why the drift
+  exists, and it builds the dispersion into the velocities, so Q-compensated imaging would then
+  apply it a second time.
+- **Using the apparent Q together with the Backus term counts the layering twice** (−0.7 to
+  −1.4 ms at TD).
+- **Using the apparent Q without the Backus term happens to work almost as well.** Stratigraphic
+  filtering is causal (O'Doherty & Anstey, 1971; Banik et al., 1985), so its delay partly
+  mimics constant-Q dispersion. The consistent pair is intrinsic Q with Backus.
+
+![Drift](docs/figures/wp3_drift.png)
 
 ## Assumptions
 
@@ -318,6 +454,27 @@ millisecond level, which WP3 will address.
    - The PP coefficients of the linearized formulas use the incidence angle in place of the
      mean of incidence and transmission angles.
 
+10. **The ZO-VSP is modelled as a vertical-incidence plane wave** (WP3). It has no geometric
+    spreading and no source offset; both are frequency independent and are absorbed by the
+    intercepts of the Q fits. The point-source records of WP2 were also tried. Their
+    slowness-integral truncation leaves a 2–3 % precursor 30–50 ms before the first arrival at the
+    shallow receivers, inside the spectral window, and that biased t* in the top block. The
+    straight-ray offset correction is tested separately.
+11. **Noise is white, band-limited Gaussian at 0.3 % of each trace's peak** (about 50 dB). 1 % is
+    reported as a sensitivity case.
+12. **WP3 parameter choices:**
+    - the t* band is 10–100 Hz;
+    - the first-arrival window runs from 50 ms before to 100 ms after the pick;
+    - the Q blocks are bounded by the Hekkingen, Fruholmen and Snadd tops;
+    - the seismic frequency is 30 Hz;
+    - the Backus window is 40 m (about half the 30 Hz wavelength). In a noise-free test, 20 m
+      raised the residual with the VSP intrinsic Q from 0.18 to 0.30 ms RMS.
+13. **The log-based stratigraphic model** fills the gap between the seabed and the top of the
+    logs (417.5–470 m) with one layer of the mean of the first 10 m of logs. It is isotropic
+    with no Q, which is enough at vertical incidence.
+14. **The well is vertical,** so the anisotropy term of the physical calibration is zero. It is
+    implemented with Thomsen's (1986) weak-anisotropy relation for deviated wells.
+
 ## Notes found while implementing
 
 - **The plan defined interbed multiples as "full minus primaries-only" (WP7). That is misleading
@@ -326,6 +483,25 @@ millisecond level, which WP3 will address.
   and the plan is corrected.
 - **The Rüger (1997) approximation is accurate to about 30°** on this well, but not near the
   critical angle at top Fruholmen (WP2).
+- **The WP2 ZO-VSP delay was misattributed** to Q. It is the waveform convention of
+  `Reflectivity.record`, whose wavelet is the source potential (see the corrected WP2 section).
+- **Naive peak picks jump between lobes** (WP3). This happens with a source ghost, where two
+  lobes are nearly equal, or with upgoing waves interfering. The picker therefore chooses the lobe
+  once and follows it along the onset moveout.
+- **The Hilbert envelope must be zero-padded.** Energy still arriving at the end of the trace
+  otherwise wraps to t = 0, and the onset guide jumps there.
+- **Measure phase delays on the separated downgoing wavefield.** On raw traces, upgoing
+  reflections in the window scatter the 30 Hz times by about 0.5 ms, and the reference trace is
+  biased by 1 ms.
+- **Interval Q needs an intercept.** The reference receiver sits at the edge of the array, where
+  separation is one-sided, and its spectrum error (−0.2 ms of t*) otherwise lands entirely in the
+  first block.
+- **A velocity gradient inside a thick block biases the blocked interval velocities of its thin
+  neighbours.** On this well, Snadd as one block moved Fruholmen by 600 m/s, so it is split into
+  100 m blocks.
+- **The plan's formula 1/Q_int = 1/Q_app − 1/Q_strat holds only for consistent measurements.**
+  Q_app and Q_strat must use the same band and estimator. The second-order interaction (the
+  multiples are themselves attenuated) is at or below 1 × 10⁻³ in 1/Q here.
 - **The plan's WP1 check "Backus averaging of isotropic layers gives ε ≥ 0" was wrong.** The test
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
@@ -340,15 +516,20 @@ iwt/
   qmodel.py       constant-Q (Kjartansson) dispersion and attenuation
   rockphysics.py  Gassmann fluid substitution, Reuss fluid mixing
   synthetic.py    the Wisting-like true model and its wireline logs
-  plotting.py     well, anisotropy, AVO and gather displays (matplotlib)
+  calibration.py  drift curve; knee and physical (dispersion + Backus + anisotropy) sonic calibration
+  plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
     reflection.py    exact (isotropic, VTI) and approximate PP reflection coefficients
     convolution.py   wavelets, normal-incidence synthetics, angle gathers
     reflectivity.py  Kennett reflectivity method with physics switches; point-source records
+  vsp/
+    zovsp.py         picking, time-depth, interval velocity, separation, deconvolution, corridor stack
+    attenuation.py   first-arrival spectra, spectral ratio, centroid shift, interval Q
 examples/wp1_synthetic_well.py      prints the WP1 numbers and writes docs/figures/wp1_*.png
 examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-VSP; docs/figures/wp2_*.png
-tests/            pytest suite (67 tests)
+examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; docs/figures/wp3_*.png
+tests/            pytest suite (93 tests)
 docs/             implementation plan and figures
 References/       the article (PDF)
 ```
@@ -359,22 +540,36 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 
 * Aki, K., & Richards, P. G. (1980). *Quantitative Seismology: Theory and Methods*. W. H. Freeman.
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
+* Banik, N. C., Lerche, I., & Shuey, R. T. (1985). Stratigraphic filtering, Part I: Derivation of the O'Doherty–Anstey formula. *Geophysics*, 50(12), 2768–2774. https://doi.org/10.1190/1.1441897
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
 * Cavalca, M., Fletcher, R., & Riedel, M. (2013). Q-compensation in complex media—Ray-based and wavefield extrapolation approaches. *SEG Technical Program Expanded Abstracts 2013*, 3831–3835. https://doi.org/10.1190/segam2013-1130.1
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gassmann, F. (1951). Über die Elastizität poröser Medien. *Vierteljahrsschrift der Naturforschenden Gesellschaft in Zürich*, 96, 1–23.
+* Goetz, J. F., Dupal, L., & Bowler, J. (1979). An investigation into discrepancies between sonic log and seismic check shot velocities. *APEA Journal*, 19(1), 131–141. https://doi.org/10.1071/AJ78014
+* Hardage, B. A. (1985). *Vertical Seismic Profiling, Part A: Principles* (2nd ed.). Geophysical Press.
+* Hauge, P. S. (1981). Measurements of attenuation from vertical seismic profiles. *Geophysics*, 46(11), 1548–1558. https://doi.org/10.1190/1.1441161
+* Hinds, R. C., Anderson, N. L., & Kuzmiski, R. D. (1996). *VSP Interpretive Processing: Theory and Practice*. SEG. https://doi.org/10.1190/1.9781560801894
 * Kennett, B. L. N., & Kerry, N. J. (1979). Seismic waves in a stratified half space. *Geophysical Journal International*, 57(3), 557–583. https://doi.org/10.1111/j.1365-246X.1979.tb06779.x
 * Kjartansson, E. (1979). Constant Q-wave propagation and attenuation. *Journal of Geophysical Research*, 84(B9), 4737–4748. https://doi.org/10.1029/JB084iB09p04737
+* Kommedal, J. H., & Tjøstheim, B. A. (1989). A study of different methods of wavefield separation for application to VSP data. *Geophysical Prospecting*, 37(2), 117–142. https://doi.org/10.1111/j.1365-2478.1989.tb01826.x
 * Leaney, W. S., & Hornby, B. E. (2007). Depth-dependent anisotropy from sub-salt walkaway VSP data. *69th EAGE Conference & Exhibition*. https://doi.org/10.3997/2214-4609.201401677
 * Lewis, O. J., et al. (2016). Integrated processing of borehole and surface seismic measurements for enhanced well tie and AVO analysis. *78th EAGE Conference & Exhibition*. https://doi.org/10.3997/2214-4609.201601553
+* Lizarralde, D., & Swift, S. (1999). Smooth inversion of VSP traveltime data. *Geophysics*, 64(3), 659–661. https://doi.org/10.1190/1.1444574
+* Marion, D., Mukerji, T., & Mavko, G. (1994). Scale effects on velocity dispersion: From ray to effective medium theories in stratified media. *Geophysics*, 59(10), 1613–1619. https://doi.org/10.1190/1.1443550
 * Mavko, G., Mukerji, T., & Dvorkin, J. (2009). *The Rock Physics Handbook* (2nd ed.). Cambridge University Press. https://doi.org/10.1017/CBO9780511626753
+* Molyneux, J. B., & Schmitt, D. R. (1999). First-break timing: Arrival onset times by direct correlation. *Geophysics*, 64(5), 1492–1501. https://doi.org/10.1190/1.1444653
 * O'Doherty, R. F., & Anstey, N. A. (1971). Reflections on amplitudes. *Geophysical Prospecting*, 19(3), 430–458. https://doi.org/10.1111/j.1365-2478.1971.tb00610.x
+* Quan, Y., & Harris, J. M. (1997). Seismic attenuation tomography using the frequency shift method. *Geophysics*, 62(3), 895–905. https://doi.org/10.1190/1.1444197
+* Richards, P. G., & Menke, W. (1983). The apparent attenuation of a scattering medium. *Bulletin of the Seismological Society of America*, 73(4), 1005–1021. https://doi.org/10.1785/BSSA0730041005
+* Rio, P., Mukerji, T., Mavko, G., & Marion, D. (1996). Velocity dispersion and upscaling in a laboratory-simulated VSP. *Geophysics*, 61(2), 584–593. https://doi.org/10.1190/1.1443984
 * Rüger, A. (1997). P-wave reflection coefficients for transversely isotropic models with vertical and horizontal axis of symmetry. *Geophysics*, 62(3), 713–722. https://doi.org/10.1190/1.1444181
+* Seeman, B., & Horowicz, L. (1983). Vertical seismic profiling: Separation of upgoing and downgoing acoustic waves in a stratified medium. *Geophysics*, 48(5), 555–568. https://doi.org/10.1190/1.1441486
 * Shuey, R. T. (1985). A simplification of the Zoeppritz equations. *Geophysics*, 50(4), 609–614. https://doi.org/10.1190/1.1441936
 * Stewart, R. R., Huddleston, P. D., & Kan, T. K. (1984). Seismic versus sonic velocities: A vertical seismic profiling study. *Geophysics*, 49(8), 1153–1168. https://doi.org/10.1190/1.1441745
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435
+* White, R. E., & Simm, R. (2003). Tutorial: Good practice in well ties. *First Break*, 21(10). https://doi.org/10.3997/1365-2397.21.10.25640
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index. The plan lists further references for WP2–WP8.
+DOIs were checked against the Scite index; the WP3 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The plan lists further references for WP4–WP8.

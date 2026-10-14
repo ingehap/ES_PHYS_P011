@@ -251,6 +251,19 @@ def test_vertical_attenuation_matches_constant_q():
     np.testing.assert_allclose(ratio, expected, rtol=1e-10)
 
 
+def test_up_down_split_of_vertical_displacement():
+    """uz_down + uz_up = uz in the sea and in the solid; nothing goes up below the last interface."""
+    m = ElasticModel1D([0.0, 100.0, 300.0, 1000.0], vp0=[1480.0, 2500.0, 3000.0],
+                       vs0=[0.0, 1100.0, 1500.0], rho=[1030.0, 2200.0, 2400.0],
+                       qp=[np.inf, 40.0, 60.0], qs=[np.inf, 25.0, 40.0])
+    f = np.array([10.0, 30.0, 60.0])
+    out = Reflectivity(m).plane_wave(2 * np.pi * f + 0.3j, [0.0, 1e-4], 6.0, [50.0, 200.0, 500.0],
+                                     source="explosion")
+    np.testing.assert_allclose(out["uz_down"] + out["uz_up"], out["uz"], rtol=1e-12, atol=1e-15)
+    assert np.all(np.abs(out["uz_up"][:2]) > 0)
+    np.testing.assert_allclose(out["uz_up"][2], 0.0, atol=1e-14)
+
+
 def test_angle_gather_methods_and_timing():
     m = ElasticModel1D([0.0, 500.0, 600.0, 800.0], vp0=[2400.0, 2800.0, 2925.0],
                        vs0=[950.0, 1300.0, 1667.0], rho=[2280.0, 2450.0, 2166.0],
