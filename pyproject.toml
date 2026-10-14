@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iwt"
-version = "0.4.0"
+version = "0.5.0"
 description = "Integrated borehole and surface seismic well tie (Lewis et al., 2016, 78th EAGE) in Python"
 readme = "README.md"
 requires-python = ">=3.9"

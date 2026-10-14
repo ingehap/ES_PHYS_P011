@@ -17,8 +17,9 @@ The roadmap, assumptions, critical assessment and full reference list are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
 **Status:** work packages 1 (foundations), 2 (forward modelling), 3 (ZO-VSP processing, Q and
-the sonic calibration) and 4 (sonic anisotropy) are implemented. WP5–WP8 (walkaway anisotropy,
-Q-compensated imaging, the integrated loop, real-data I/O) are still to do.
+the sonic calibration), 4 (sonic anisotropy) and 5 (walkaway anisotropy and the γ → (ε, δ)
+calibration) are implemented. WP6–WP8 (Q-compensated imaging, the integrated loop, real-data
+I/O) are still to do.
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -106,6 +107,22 @@ tool = sonic.Borehole(radius=0.108, tool_radius=0.046)
 res = sonic.sonic_anisotropy(logs.vp, logs.vs, logs.rho, st.slowness, sonic.Mud(1500.0, 1250.0),
                              tool, frequency=500.0, radius=caliper)   # exact TI Stoneley mode
 res.gamma                                                       # (C66 - C44) / (2 C44)
+
+# eps and delta from a walkaway VSP, and the gamma -> (eps, delta) calibration (WP5)
+from iwt.vsp import walkaway
+from iwt.calibration import bayes_linear
+
+seis = model.backus(40.0, respect=[417.5])                      # the medium a 40 m sub-array sees
+offsets = np.concatenate([-np.arange(2500.0, 199.0, -25.0), np.arange(200.0, 2501.0, 25.0)])
+survey = walkaway.synthetic_walkaway(seis, offsets, np.arange(600.0, 901.0, 10.0),
+                                     time_noise=0.2e-3, psi_noise=np.radians(1.5))   # exact qP rays
+data = walkaway.measure_slowness(survey, 770.0, time_noise=0.2e-3, psi_noise=np.radians(1.5))
+data = data.select((data.theta > np.radians(30.0)) & (data.theta < np.radians(60.0)))
+post = walkaway.invert_level(data, prior={"vp0": (3370.0, 34.0), "vs0": (1805.0, 90.0)})
+post["eps"], post["delta"], post.data_weight                     # (mean, std); share from the data
+cal = bayes_linear([0.20, 0.05, 0.10, 0.07, 0.12, 0.12],         # gamma at the levels
+                   [0.13, 0.05, 0.08, 0.05, 0.10, 0.10], 0.006)  # walkaway eps and its errors
+cal.predict(0.3)                                                 # eps (mean, std) where gamma = 0.3
 ```
 
 ## What WP1 provides
@@ -449,6 +466,127 @@ Residual drift after calibration, against the 30 Hz phase delays:
 
 ![Drift](docs/figures/wp3_drift.png)
 
+## What WP5 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| exact qP kinematics | `iwt.raytrace` | phase velocity, vertical slowness q(p) and dq/dp, polarization (Christoffel eigenvector) in VTI; fluids included (Tsvankin, 2012) |
+| two-point rays in layered VTI | `two_point` | X(p) and T(p) summed over layers for all receivers at once, Newton refinement; rays steeper than `max_angle` (85°) in any layer are excluded (refraction regime) |
+| synthetic walkaway VSP | `iwt.vsp.walkaway.synthetic_walkaway` | direct qP times and polarizations, several azimuths, source statics, noise |
+| slowness and polarization | `measure_slowness`, `hodogram_polarization` | q across a receiver sub-array, p across neighbouring sources, mean polarization; their **joint covariance** from the linear operators (overlapping windows correlate the p's) |
+| inversion with priors | `invert_level`, `Posterior` | (Vp0, Vs0, ε, δ) by Levenberg–Marquardt on V(θ) and ψ(θ) with the exact Christoffel equation (or Thomsen's weak form); effective-variance residual covariance, frozen per iteration; Gaussian priors; Laplace posterior; `data_weight` = 1 − σ²_post/σ²_prior |
+| consistency checks | `azimuthal_consistency`, `polarization_check` | χ² test across azimuths (VTI hypothesis); polarizations predicted by a slowness-only fit, with the posterior uncertainty of the prediction (lateral heterogeneity) |
+| γ → (ε, δ) calibration | `iwt.calibration.upscale_gamma`, `bayes_linear` | Backus upscaling of C44 and C66 to the sub-array length; Bayesian straight line with the walkaway errors, extra scatter by type-II maximum likelihood, leave-one-out predictions, predictive bands |
+| figures | `examples/wp5_walkaway.py` | `docs/figures/wp5_*.png` |
+
+## WP5 results (synthetic well; `python examples/wp5_walkaway.py`, about 45 s)
+
+**The survey.** Sources every 25 m from 200 m (the article's exclusion zone) to 2500 m on both
+sides of the well, at 6 m depth; receivers every 10 m from 600 to 900 m. Picks carry 0.2 ms and
+polarizations 1.5° of noise. The rays are traced through the 40 m running Backus average of the
+well model, so the slowness across a 40 m sub-array and the polarization at its receivers see
+the same medium; that average is also the truth. Each of the six levels (650–850 m) uses five
+receivers. Priors: Vp0 from the ZO-VSP (1 %, drawn around the truth), Vs0 from the dipole log
+over the sub-array (5 %), Backus-averaged and moved to 30 Hz.
+
+**Fast stringers limit the angles, as in the article.** Beyond the critical offset of the
+calcite-cemented stringers above 600 m the first arrival is a refraction, so direct rays reach
+only 775–1450 m of offset, and 23–78° at the levels. The 30–60° window keeps 27–40 sources per
+level. The article's "about 30° to 60°" may have the same cause.
+
+| Level (unit) | true ε | A: exact, slowness + polarization | B: slowness only | C: weak anisotropy | D: as A, all angles | true δ | A | B | D |
+|---|---|---|---|---|---|---|---|---|---|
+| 650 m (Fuglen) | 0.145 | 0.132 ± 0.007 | 0.160 ± 0.014 | 0.168 ± 0.015 | 0.135 ± 0.006 | 0.038 | 0.044 ± 0.019 | −0.043 ± 0.039 | 0.056 ± 0.015 |
+| 690 m (Stø) | 0.038 | 0.048 ± 0.005 | 0.034 ± 0.014 | 0.034 ± 0.014 | 0.050 ± 0.005 | 0.009 | −0.018 ± 0.013 | −0.003 ± 0.043 | −0.017 ± 0.009 |
+| 720 m (Nordmela) | 0.084 | 0.081 ± 0.005 | 0.071 ± 0.014 | 0.067 ± 0.014 | 0.084 ± 0.005 | 0.026 | 0.024 ± 0.015 | 0.130 ± 0.053 | 0.012 ± 0.010 |
+| 770 m (Fruholmen) | 0.053 | 0.049 ± 0.006 | 0.044 ± 0.019 | 0.043 ± 0.019 | 0.049 ± 0.005 | 0.019 | 0.027 ± 0.018 | 0.036 ± 0.052 | 0.024 ± 0.012 |
+| 810 m (Snadd) | 0.093 | 0.100 ± 0.006 | 0.093 ± 0.014 | 0.096 ± 0.014 | 0.109 ± 0.005 | 0.031 | 0.033 ± 0.017 | −0.018 ± 0.040 | 0.042 ± 0.011 |
+| 850 m (Snadd) | 0.102 | 0.103 ± 0.006 | 0.104 ± 0.015 | 0.101 ± 0.015 | 0.102 ± 0.005 | 0.039 | 0.043 ± 0.016 | 0.070 ± 0.049 | 0.045 ± 0.010 |
+| RMS of (estimate − truth)/σ | | 1.25 | 0.65 | 0.87 | 1.75 | | 0.86 | 1.29 | 1.44 |
+
+- **The polarization halves the ε error and triples the δ precision** (A against B), but its
+  errors are no longer honest: inverting the *noise-free* data gives ε within 0.005 of the
+  truth only at three levels (0.131 against 0.145 at 650 m, 0.056 against 0.038 at 690 m). The
+  properties vary inside the 40 m sub-array, and the slowness (an average across it) and the
+  polarization (at each receiver) do not see quite the same medium. That model error, about
+  0.01 in ε, is not in the posterior σ; add it before using the numbers.
+- **Without polarization (B) Vp0 is set by its prior** (data weight 0.04–0.09 at 30–60°,
+  against 0.67–0.76 with polarization). The ZO-VSP Vp0 is therefore essential, not optional.
+- **The weak-anisotropy formula (C) is as good as the exact one at these levels** (ε ≤ 0.15). It
+  fails in the strongly anisotropic overburden: in a test with ε = 0.26, δ = 0.10 it puts δ
+  more than 2σ too high, where the exact fit is within 1σ.
+- **The raw dipole Vs0 (4–5 % fast: sonic frequency and scale) moves ε by only −0.001 to
+  −0.003** here, because the data weight on Vs0 is small and ε is well determined. With the
+  polarization, ε and δ do depend on Vs0 (next point), so the bias matters more where the
+  anisotropy is strong.
+- **More angles (D, 23–78°) shrink the errors by 20–40 % but not the bias** of the
+  slowness-polarization mismatch; D has the worst z-scores.
+
+**The near-angle trade-off** (770 m, angles up to 60°):
+
+| smallest angle | 20° | 30° | 35° | 40° |
+|---|---|---|---|---|
+| σ(δ) | 0.015 | 0.018 | 0.022 | 0.029 |
+| corr(ε, δ) | +0.30 | +0.37 | +0.46 | +0.61 |
+| corr(Vp0, δ) | −0.73 | −0.76 | −0.80 | −0.84 |
+| Vp0 data weight | 0.73 | 0.67 | 0.57 | 0.33 |
+
+Losing the near angles hands Vp0 to its prior and makes δ trade off with it. The 200 m exclusion
+zone is what costs the angles below 23–30° here.
+
+**Consistency checks.**
+
+- **Second azimuth (VTI):** χ² p-values 0.17–0.99 at the six levels. In the test suite, a
+  second azimuth with ε larger by 0.05 gives p < 10⁻⁶.
+- **Lateral heterogeneity:** a source static growing by 5 ms per km of offset biases the
+  slowness-only δ by up to 0.11 (720 m: 0.137 against 0.026). The polarization check flags it
+  at four of six levels at the 5 % level (p = 0.0004–0.025), and not at 770 and 810 m (p ≈ 0.3).
+  The check is weak with 27–40 sources; it needs either more angles or a stronger static.
+- **Heterogeneity inside the sub-array:** with the rays traced through the 10 m Backus model
+  instead, the noise-free estimates miss the 40 m truth by up to 0.027 in ε (650 m, next to the
+  Fuglen stringers) while χ²/n stays at 0.01–0.11. The fit statistics cannot see this error.
+
+![Walkaway inversion at 770 m](docs/figures/wp5_walkaway.png)
+
+**The γ → (ε, δ) calibration** (method A at the six levels; sonic γ from the WP4 processing with
+the mud calibrated in the Stø, upscaled to 40 m with C66 arithmetic and C44 harmonic):
+
+- ε = 0.036 (±0.006) + 0.64 (±0.07) γ, extra scatter 0.006; δ = −0.005 (±0.014) + 0.38 (±0.17) γ,
+  extra scatter 0.010. Leave-one-out z-scores are within ±1.8.
+- The sonic γ is 0.025–0.038 too low at the levels: the WP4 mud calibration in the "isotropic"
+  Stø, whose true γ is 0.02. Upscaling exact logs reproduces the truth to 0.003. The calibration
+  absorbs a *constant* offset into its intercept, but not one that varies with depth.
+
+| (prediction − truth), 40 m scale | overburden 470–640 m | calibrated 640–860 m | below 860–1670 m |
+|---|---|---|---|
+| ε: RMS / mean predictive σ / truth inside 2σ | 0.015 / 0.017 / 95 % | 0.007 / 0.007 / 94 % | 0.014 / 0.007 / **51 %** |
+| δ: RMS / mean predictive σ / truth inside 2σ | 0.036 / 0.038 / 100 % | 0.013 / 0.014 / 100 % | 0.012 / 0.013 / 100 % |
+
+- **Extrapolating into the overburden works here,** but only because the synthetic units share
+  one ε/γ ratio and the sonic γ bias is similar there. Below 860 m the γ bias grows (WP4:
+  −0.041 in the Snadd), and half of the ε curve falls outside its 2σ band. The predictive band
+  from six points does not include errors of the γ log that change with depth.
+- **Circularity is mild with polarizations:** adding a prior ε ~ N(γ, 0.05) to the inversion, as
+  the article's "stabilized with sonic γ" suggests, leaves the data weight on ε at 0.98–0.99
+  and the calibrated slope unchanged (0.64). It would matter for slowness-only inversions, whose ε
+  errors are 2–3 times larger.
+
+![gamma calibration](docs/figures/wp5_calibration.png)
+
+**Estimator properties found in the tests** (homogeneous VTI half-space under 400 m of water):
+
+- **Measurement covariance:** the propagated variances of p, q and ψ agree with Monte Carlo
+  within 10 %, including the lag-1 correlation of p (+0.4) from overlapping source windows.
+- **Coverage:** slowness-only fits with priors drawn around the truth have z-scores with standard
+  deviation 0.97–1.05 and no measurable bias. With polarizations there is an
+  errors-in-variables bias of about 0.5σ (Vp0 low, ε and δ high), which scales with the noise
+  variance; orthogonal-distance regression and a parametric bootstrap removed most of it for Vp0
+  and ε but not for δ, so neither was adopted.
+- **The P-wave phase velocity barely depends on Vs0;** with polarizations ε and δ do (Grechka &
+  Mateeva, 2007: the P-wave slowness-polarization data depend on Vp0 and two combinations of ε
+  and δ that absorb Vs0). A 10 % error in the Vs0 prior shifts ε by more than half its σ with
+  polarization, and by less than a tenth without.
+
 ## WP4 results (synthetic well; `python examples/wp4_sonic_anisotropy.py`, about 50 s)
 
 **The data.**
@@ -599,6 +737,19 @@ It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
 17. **Qs = Qp / 2** moves the dipole C44 to the Stoneley frequency, because the VSP gives only
     the P-wave Q.
 18. **No permeability or mudcake effect** on the Stoneley wave, and no eccentricity.
+19. **The walkaway is modelled with exact qP ray theory in a 1D VTI model** (WP5), without
+    waveforms: first-break times and polarizations with Gaussian errors (0.2 ms, 1.5°), picks
+    independent between traces. Head waves are not modelled; rays steeper than 85° in any layer
+    are dropped.
+20. **The walkaway "truth" is the 40 m running Backus average**, the medium seen by a 40 m
+    sub-array at about 50 Hz (λ ≈ 60–70 m). Ray theory in a model layered on the 10 m scale is a
+    separate test case.
+21. **One azimuth, vertical well, laterally homogeneous medium** unless stated. Azimuthal
+    anisotropy is simulated by a different VTI model per azimuth; lateral heterogeneity by a
+    source static linear in offset.
+22. **Priors:** Vp0 from the ZO-VSP with 1 % error, Vs0 from the dipole log with 5 % error. The
+    γ → (ε, δ) relation is a straight line with Gaussian priors N(0, 0.1²) on the intercept and
+    N(0.5, 2²) on the slope.
 
 ## Notes found while implementing
 
@@ -640,6 +791,16 @@ It is checked by Monte Carlo (4000 draws), which agrees to 0.001–0.003.
   - Its shorter aperture, next to stringers, creates spurious γ spikes.
   - Both are fixed by moving and averaging C44 to the Stoneley frequency and aperture before
     γ is formed.
+- **The walkaway residual must not have a hard edge** (WP5). Fitting q(p) fails when a noisy p
+  lies beyond the model's horizontal slowness: the model has no real q there, and the fit is
+  pushed to the bounds. Fitting the phase velocity against the phase angle, V(θ), has no such
+  edge.
+- **Letting the effective-variance covariance vary inside the misfit biases towards strong
+  anisotropy** (WP5): models that inflate the errors look better. It is held fixed at the current
+  iterate instead.
+- **A single missing pick must not void the whole p measurement** (WP5): the dense window
+  operator propagated one NaN to every source. Missing picks now void only the windows that use
+  them.
 - **The plan's WP1 check "Backus averaging of isotropic layers gives ε ≥ 0" was wrong.** The test
   suite found counter-examples, in about 10 % of random stacks. The correct statements are
   γ ≥ 0 and ε ≥ δ (η ≥ 0); ε can be negative when Vp contrasts are small and Vs contrasts large
@@ -654,8 +815,9 @@ iwt/
   qmodel.py       constant-Q (Kjartansson) dispersion and attenuation
   rockphysics.py  Gassmann fluid substitution, Reuss fluid mixing
   synthetic.py    the Wisting-like true model, its wireline logs, caliper and Stoneley logs
-  calibration.py  drift curve; knee and physical (dispersion + Backus + anisotropy) sonic calibration
+  calibration.py  drift curve; knee and physical sonic calibration; gamma -> (eps, delta) calibration
   sonic.py        C33, C44, C66 and gamma; tube wave with tool; exact TI Stoneley mode; uncertainty
+  raytrace.py     exact qP phase velocity, slowness, polarization; two-point rays in layered VTI
   plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
@@ -665,11 +827,13 @@ iwt/
   vsp/
     zovsp.py         picking, time-depth, interval velocity, separation, deconvolution, corridor stack
     attenuation.py   first-arrival spectra, spectral ratio, centroid shift, interval Q
+    walkaway.py      synthetic walkaway, slowness-polarization measurement and inversion, checks
 examples/wp1_synthetic_well.py      prints the WP1 numbers and writes docs/figures/wp1_*.png
 examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-VSP; docs/figures/wp2_*.png
 examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; docs/figures/wp3_*.png
 examples/wp4_sonic_anisotropy.py    Stoneley dispersion, gamma processing ladder, uncertainty; wp4_*.png
-tests/            pytest suite (111 tests)
+examples/wp5_walkaway.py            walkaway eps and delta, checks, gamma calibration; wp5_*.png
+tests/            pytest suite (128 tests)
 docs/             implementation plan and figures
 References/       the article (PDF)
 ```
@@ -686,8 +850,11 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Cavalca, M., Fletcher, R., & Riedel, M. (2013). Q-compensation in complex media—Ray-based and wavefield extrapolation approaches. *SEG Technical Program Expanded Abstracts 2013*, 3831–3835. https://doi.org/10.1190/segam2013-1130.1
 * Cheng, C. H., & Toksöz, M. N. (1981). Elastic wave propagation in a fluid-filled borehole and synthetic acoustic logs. *Geophysics*, 46(7), 1042–1053. https://doi.org/10.1190/1.1441242
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
+* Gaiser, J. E. (1990). Transversely isotropic phase velocity analysis from slowness estimates. *Journal of Geophysical Research*, 95(B7), 11241–11254. https://doi.org/10.1029/JB095iB07p11241
 * Gassmann, F. (1951). Über die Elastizität poröser Medien. *Vierteljahrsschrift der Naturforschenden Gesellschaft in Zürich*, 96, 1–23.
 * Goetz, J. F., Dupal, L., & Bowler, J. (1979). An investigation into discrepancies between sonic log and seismic check shot velocities. *APEA Journal*, 19(1), 131–141. https://doi.org/10.1071/AJ78014
+* Grechka, V., & Mateeva, A. (2007). Inversion of P-wave VSP data for local anisotropy: Theory and case study. *Geophysics*, 72(4), D69–D79. https://doi.org/10.1190/1.2742970
+* Grechka, V., Tsvankin, I., & Contreras, P. (2024). Inversion of walkaway VSP data in the presence of lateral velocity heterogeneity. *Energy Geoscience*, 5(2), 100255. https://doi.org/10.1016/j.engeos.2023.100255
 * Hardage, B. A. (1985). *Vertical Seismic Profiling, Part A: Principles* (2nd ed.). Geophysical Press.
 * Hauge, P. S. (1981). Measurements of attenuation from vertical seismic profiles. *Geophysics*, 46(11), 1548–1558. https://doi.org/10.1190/1.1441161
 * Hinds, R. C., Anderson, N. L., & Kuzmiski, R. D. (1996). *VSP Interpretive Processing: Theory and Practice*. SEG. https://doi.org/10.1190/1.9781560801894
@@ -699,6 +866,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Lizarralde, D., & Swift, S. (1999). Smooth inversion of VSP traveltime data. *Geophysics*, 64(3), 659–661. https://doi.org/10.1190/1.1444574
 * Marion, D., Mukerji, T., & Mavko, G. (1994). Scale effects on velocity dispersion: From ray to effective medium theories in stratified media. *Geophysics*, 59(10), 1613–1619. https://doi.org/10.1190/1.1443550
 * Mavko, G., Mukerji, T., & Dvorkin, J. (2009). *The Rock Physics Handbook* (2nd ed.). Cambridge University Press. https://doi.org/10.1017/CBO9780511626753
+* Miller, D. E., & Spencer, C. (1994). An exact inversion for anisotropic moduli from phase slowness data. *Journal of Geophysical Research*, 99(B11), 21651–21657. https://doi.org/10.1029/94JB01848
 * Molyneux, J. B., & Schmitt, D. R. (1999). First-break timing: Arrival onset times by direct correlation. *Geophysics*, 64(5), 1492–1501. https://doi.org/10.1190/1.1444653
 * Norris, A. N. (1990). The speed of a tube wave. *Journal of the Acoustical Society of America*, 87(1), 414–417. https://doi.org/10.1121/1.399262
 * Norris, A. N., & Sinha, B. K. (1993). Weak elastic anisotropy and the tube wave. *Geophysics*, 58(8), 1091–1098. https://doi.org/10.1190/1.1443493
@@ -712,6 +880,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Stewart, R. R., Huddleston, P. D., & Kan, T. K. (1984). Seismic versus sonic velocities: A vertical seismic profiling study. *Geophysics*, 49(8), 1153–1168. https://doi.org/10.1190/1.1441745
 * Tang, X. M. (2003). Determining formation shear-wave transverse isotropy from borehole Stoneley-wave measurements. *Geophysics*, 68(1), 118–126. https://doi.org/10.1190/1.1543199
 * Thomsen, L. (1986). Weak elastic anisotropy. *Geophysics*, 51(10), 1954–1966. https://doi.org/10.1190/1.1442051
+* Tsvankin, I. (2012). *Seismic Signatures and Analysis of Reflection Data in Anisotropic Media* (3rd ed.). SEG. https://doi.org/10.1190/1.9781560803003
 * Valero, H.-P., Djikpesse, H. A., & Sinha, B. K. (2009). Estimation of borehole fluid slowness using sonic array waveforms. *SEG Technical Program Expanded Abstracts 2009*, 361–365. https://doi.org/10.1190/1.3255617
 * Walsh, J., Sinha, B., Plona, T., & Ammerman, M. (2007). Derivation of anisotropy parameters in a shale using borehole sonic data. *SEG Technical Program Expanded Abstracts 2007*, 323–327. https://doi.org/10.1190/1.2792435
 * White, J. E. (1983). *Underground Sound: Application of Seismic Waves*. Elsevier.
@@ -721,4 +890,4 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The plan lists further references for WP5–WP8.
+DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The plan lists further references for WP6–WP8.

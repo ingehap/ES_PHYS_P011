@@ -31,6 +31,15 @@ Two calibrations are provided:
   parameters.  What remains is the drift that physics does not explain, which is
   the quantity to inspect (:func:`drift`).
 
+**The gamma -> (eps, delta) calibration (WP5).**  The walkaway VSP gives eps
+and delta at a few levels; the sonic gives gamma continuously.  The article
+calibrates the gamma curve with the walkaway estimates to obtain eps and delta
+curves.  :func:`upscale_gamma` first brings the sonic gamma to the seismic scale
+(Backus: C66 arithmetic, C44 harmonic), and :func:`bayes_linear` fits a
+straight line with the walkaway errors, an extra scatter estimated from the
+data, leave-one-out cross-validation, and predictive bands that widen away from
+the calibrated gamma range.
+
 References
 ----------
 Backus, G. E., 1962, Long-wave elastic anisotropy produced by horizontal
@@ -70,6 +79,9 @@ __all__ = [
     "knee_calibration",
     "backus_vertical_velocity",
     "physical_calibration",
+    "upscale_gamma",
+    "LinearCalibration",
+    "bayes_linear",
 ]
 
 
@@ -215,3 +227,97 @@ def physical_calibration(depth, vp, rho, q, f_sonic: float, f_seismic: float,
     if backus_length:
         v = backus_vertical_velocity(depth, v, rho, backus_length)
     return v
+
+
+def upscale_gamma(depth, c44, c66, length: float) -> np.ndarray:
+    """Thomsen gamma of the Backus average over ``length`` (m) of a C44, C66 log.
+
+    For a stack of VTI layers the long-wavelength C66 is the arithmetic and C44
+    the harmonic average (Backus, 1962), so thin stiff beds raise the
+    seismic-scale gamma above the average of the log.
+    """
+    d = np.asarray(depth, dtype=float)
+    dz = float(np.median(np.diff(d)))
+    n = max(1, int(round(length / dz)) | 1)
+    c44m = 1.0 / _running_mean(1.0 / np.asarray(c44, float), n)
+    c66m = _running_mean(np.asarray(c66, float), n)
+    return 0.5 * (c66m / c44m - 1.0)
+
+
+class LinearCalibration(NamedTuple):
+    """Bayesian straight line ``y = a + b x``: posterior of (a, b), scatter, cross-validation."""
+
+    coef: np.ndarray
+    coef_cov: np.ndarray
+    scatter: float
+    x: np.ndarray
+    y: np.ndarray
+    sigma: np.ndarray
+    loo_mean: np.ndarray
+    loo_std: np.ndarray
+
+    def predict(self, x, scatter: bool = True):
+        """Predictive ``(mean, std)`` at ``x``; ``scatter=False`` gives the line's own error."""
+        x = np.asarray(x, dtype=float)
+        G = np.stack([np.ones_like(x), x], axis=-1)
+        mean = G @ self.coef
+        var = np.einsum("...i,ij,...j->...", G, self.coef_cov, G)
+        if scatter:
+            var = var + self.scatter ** 2
+        return mean, np.sqrt(var)
+
+    @property
+    def loo_z(self) -> np.ndarray:
+        """Leave-one-out residuals in units of their predictive standard deviation."""
+        return (self.y - self.loo_mean) / np.sqrt(self.loo_std ** 2 + self.sigma ** 2)
+
+
+def _line_posterior(x, y, var, m0, P0):
+    G = np.column_stack([np.ones_like(x), x])
+    A = G.T @ (G / var[:, None]) + P0
+    cov = np.linalg.inv(A)
+    mean = cov @ (G.T @ (y / var) + P0 @ m0)
+    return mean, cov
+
+
+def bayes_linear(x, y, sigma, prior_mean=(0.0, 0.0), prior_std=(1.0, 1.0),
+                 scatter: Optional[float] = None) -> LinearCalibration:
+    """Bayesian linear regression ``y = a + b x`` with known errors and extra scatter.
+
+    Each ``y_i`` has a measurement error ``sigma_i`` plus a common scatter tau
+    (the part of the relation the line does not explain).  (a, b) have
+    independent Gaussian priors; tau, if not given, maximizes the marginal
+    likelihood (type-II maximum likelihood, on a grid).  The leave-one-out
+    predictions refit the line without each point in turn; with few points
+    (the article has six) they are the honest measure of how well the
+    calibration predicts.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    s = np.broadcast_to(np.asarray(sigma, dtype=float), x.shape)
+    m0 = np.asarray(prior_mean, dtype=float)
+    P0 = np.diag(1.0 / np.asarray(prior_std, dtype=float) ** 2)
+
+    def log_evidence(tau):
+        var = s ** 2 + tau ** 2
+        G = np.column_stack([np.ones_like(x), x])
+        C = np.diag(var) + G @ np.linalg.inv(P0) @ G.T
+        r = y - G @ m0
+        sign, logdet = np.linalg.slogdet(C)
+        return -0.5 * (logdet + r @ np.linalg.solve(C, r))
+
+    if scatter is None:
+        spread = max(float(np.std(y)), float(np.max(s)), 1e-6)
+        grid = np.concatenate([[0.0], np.geomspace(1e-4 * spread, 3.0 * spread, 200)])
+        scatter = float(grid[np.argmax([log_evidence(t) for t in grid])])
+    var = s ** 2 + scatter ** 2
+    mean, cov = _line_posterior(x, y, var, m0, P0)
+    loo_m = np.empty(x.size)
+    loo_s = np.empty(x.size)
+    for i in range(x.size):
+        keep = np.arange(x.size) != i
+        mi, ci = _line_posterior(x[keep], y[keep], var[keep], m0, P0)
+        g = np.array([1.0, x[i]])
+        loo_m[i] = g @ mi
+        loo_s[i] = np.sqrt(g @ ci @ g + scatter ** 2)
+    return LinearCalibration(mean, cov, scatter, x, y, s, loo_m, loo_s)
