@@ -20,11 +20,13 @@ package 6 Q-compensated depth migration of CMP gathers (:mod:`iwt.imaging`) with
 AVA extraction (:mod:`iwt.avo`), and work package 7 the integrated loop: well-tie
 metrics (:mod:`iwt.welltie`), versioned models and the discrepancy register
 (:mod:`iwt.workflow`) and the contamination by multiples and mode conversion
-(:mod:`iwt.multiples`).
+(:mod:`iwt.multiples`).  Work package 8 adds the file adapters (:mod:`iwt.io`:
+SEG-Y, LAS, CSV), the ZO-VSP processing chain in one call
+(:mod:`iwt.vsp.processing`) and the ``iwt`` command (:mod:`iwt.cli`).
 Plotting (:mod:`iwt.plotting`) needs matplotlib.
 """
 
-from . import (avo, calibration, imaging, multiples, paper, qmodel, raytrace, rockphysics,
+from . import (avo, calibration, imaging, io, multiples, paper, qmodel, raytrace, rockphysics,
                sonic, welltie, workflow)
 from .model import (
     ElasticModel1D,
@@ -38,12 +40,13 @@ from .model import (
 )
 from .synthetic import WellLogs, synthetic_logs, wisting_like_model, wisting_like_well
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "avo",
     "calibration",
     "imaging",
+    "io",
     "multiples",
     "paper",
     "qmodel",

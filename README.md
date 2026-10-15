@@ -18,9 +18,11 @@ The roadmap, assumptions, critical assessment and full reference list are in
 
 **Status:** work packages 1 (foundations), 2 (forward modelling), 3 (ZO-VSP processing, Q and
 the sonic calibration), 4 (sonic anisotropy), 5 (walkaway anisotropy and the γ → (ε, δ)
-calibration), 6 (ray tracing and Q-compensated depth imaging, the Fig. 3 experiment) and 7 (the
-integrated loop with its discrepancy register, multiples, the Fig. 2, 4 and 5 analogues) are
-implemented. WP8 (real-data I/O and a command line) is still to do.
+calibration), 6 (ray tracing and Q-compensated depth imaging, the Fig. 3 experiment), 7 (the
+integrated loop with its discrepancy register, multiples, the Fig. 2, 4 and 5 analogues) and 8
+(SEG-Y and LAS adapters, the `iwt` command, the critical assessment) are implemented. What the
+work found about the article is summarized in
+[The article's claims, tested on the synthetic well](#the-articles-claims-tested-on-the-synthetic-well).
 
 ![Synthetic well](docs/figures/wp1_well.png)
 
@@ -44,12 +46,13 @@ reservoir AVO, and the reprocessed image revealed an oil–water contact.
 ## Installation
 
 ```bash
-pip install -e .            # core: numpy and scipy
-pip install -e ".[all]"     # + matplotlib (figures) and lasio
-pip install -e ".[dev]"     # + pytest and pyflakes
+pip install -e .            # core: numpy and scipy; installs the `iwt` command
+pip install -e ".[all]"     # + matplotlib (figures) and lasio (LAS files)
+pip install -e ".[dev]"     # + pytest, pyflakes and segyio (cross-check of the SEG-Y reader)
 ```
 
-Python ≥ 3.9. CI (GitHub Actions) runs pyflakes and the tests on Python 3.9 and 3.13.
+Python ≥ 3.9. CI (GitHub Actions) runs pyflakes and the tests on Python 3.9 and 3.13. SEG-Y
+needs no extra package.
 
 ## Quick start
 
@@ -155,7 +158,52 @@ syn = normal_incidence(v1.model, 0.002, 600, wav)[1]
 m = welltie.tie_metrics(np.roll(syn, 2), syn, 0.002)            # correlation, shift, phase, scale, PEP
 g = multiples.gathers(v1.model.subset(0.0, 780.0), [300.0], 6.0, 8.0, 0.002, 600, wav, f_max=90.0)
 g.keys()                                    # full, primaries, no mode conversion, ..., Born primaries
+
+# files and the ZO-VSP chain in one call (WP8)
+from iwt import io
+from iwt.vsp.processing import process_zovsp
+
+io.write_zovsp("zovsp.sgy", vsp)                                # SEG-Y; also read_segy, read_gather
+res = process_zovsp(io.read_zovsp("zovsp.sgy"), 1470.0, q_blocks=[600.0, 740.0, 800.0])
+res.times, res.q.q                                              # vertical times, apparent Q per block
 ```
+
+## Command line
+
+`pip install -e .` installs the `iwt` command (`python -m iwt` is the same). The demo writes the
+synthetic well as files, and the next three commands run the ZO-VSP, model and tie steps on them,
+as they would on recorded data:
+
+```bash
+iwt demo demo/            # logs (LAS and CSV), ZO-VSP and a seismic trace at the well (SEG-Y)
+iwt vsp demo/zovsp.sgy --datum-velocity 1470 --q-blocks 600 740 800 \
+        --logs demo/logs.las --water-depth 417.5 --corridor demo/corridor.sgy -o demo/vsp.json
+iwt model demo/logs.las --water-depth 417.5 --vsp demo/vsp.json -o demo/model.csv
+iwt tie demo/model.csv demo/corridor.sgy --plot demo/tie.png
+iwt tie demo/model.csv demo/seismic.sgy --attenuation
+```
+
+```text
+121 levels 450.0-1650.0 m; one-way time 0.3004-0.6867 s; first-arrival peak 47 Hz
+intrinsic Q per block: 450-600 m: 45; 600-740 m: 59; 740-800 m: 120; 800-1650 m: 72
+2402 layers to 1670.0 m; logs 470.0-1670.0 m
+  intrinsic Q from demo/vsp.json
+  gap velocity 2129 m/s from the VSP
+  model vertical time minus VSP: mean -0.77 ms, RMS 0.83 ms
+window 0.638-1.382 s, ricker wavelet: correlation 0.944 (best 0.980), shift +0.7 ms, phase +3 deg, ...
+window 0.638-1.298 s, ricker wavelet: correlation 0.950 (best 0.990), shift +1.5 ms, phase -4 deg, ...
+```
+
+- **`iwt vsp`** runs the WP3 chain on a zero-offset VSP: picks, separation, 30 Hz traveltimes,
+  interval velocities, t\* and interval Q. With `--logs` it subtracts the stratigraphic t\*
+  (intrinsic Q). It writes the corridor stack and a time-depth CSV if asked.
+- **`iwt model`** builds the 0.5 m elastic model from the logs. It moves the sonic velocities to
+  30 Hz with the VSP Q (Qs = Qp/2), fills the gap above the logs with the VSP velocity, and adds
+  optional ε, δ and γ curves. It reports the model's misfit to the VSP times.
+- **`iwt tie`** makes the normal-incidence synthetic, with a Ricker or a least-squares wavelet,
+  and reports the tie metrics.
+
+`iwt <command> --help` lists every option.
 
 ## What WP1 provides
 
@@ -255,6 +303,17 @@ about 1400 slownesses) with `workers=4`.
 | Fig. 5 section | `iwt.synthetic.dipping_reservoir_models` | columns with a wedge-shaped anisotropic shale, a dipping reservoir and a flat oil–water contact; an all-brine twin for the fluid signal |
 | exact PP in slowness | `iwt.modeling.reflection.exact_pp_slowness` | the VTI coefficient as a function of the horizontal slowness (complex beyond critical) |
 | the loop | `examples/reproduce_paper.py` | `docs/discrepancy_register.md`, `docs/figures/wp7_*.png` |
+
+## What WP8 provides
+
+| Plan item | Code | Notes |
+|---|---|---|
+| SEG-Y | `iwt.io.read_segy`, `write_segy`, `TRACE_HEADER`, `ibm_to_ieee`, `ieee_to_ibm` | numpy implementation of revisions 1 and 2 with fixed-length traces: IBM, IEEE and integer samples, both byte orders, EBCDIC or ASCII text, scaled elevation and coordinate words; checked against segyio in both directions |
+| VSP and gather files | `iwt.io.read_zovsp`, `write_zovsp`, `read_gather`, `write_gather`, `Gather` | receiver depth from a chosen header word with sign and datum shift; source depth and offset from the headers |
+| LAS | `iwt.io.read_las`, `write_las` | lasio; P/S slowness and density by common mnemonics, us/ft, us/m, g/cm³, kg/m³; TVDSS curve or MD − KB (vertical well); missing samples dropped; optional resampling |
+| CSV | `iwt.io.read_logs_csv`, `write_logs_csv`, `read_logs`, `write_model_csv`, `read_model_csv`, `write_time_depth`, `read_time_depth` | logs in SI units, layer models with Q and labels, time-depth tables |
+| ZO-VSP in one call | `iwt.vsp.processing.process_zovsp`, `source_wavelet`, `ZOVSPResult` | the WP3 chain; the stratigraphic synthetic is driven by the recorded first arrival |
+| `iwt` command | `iwt.cli` (`iwt demo`, `iwt vsp`, `iwt model`, `iwt tie`), `python -m iwt` | JSON, CSV and SEG-Y outputs; optional tie plot |
 
 ## The synthetic well
 
@@ -976,6 +1035,147 @@ could not attribute. Every model version, discrepancy and acceptance criterion i
 5. **The shallowest Q** (seabed to the first VSP receiver) needs its own constraint: the
    source signature or the seabed multiples.
 
+## WP8 results (synthetic well, through files; `iwt demo` and the commands above, about 10 s)
+
+**The files reproduce the in-memory results.**
+
+- **SEG-Y:** IBM samples round-trip to 2⁻²¹ relative precision (hexadecimal normalization), IEEE
+  exactly. Elevations and depths keep centimetres through the scalar words. segyio reads these
+  files, and this reader reads segyio's, with identical samples and headers.
+- **LAS:** logs round-trip to the file's printed precision, both through a TVDSS curve and
+  through MD minus the kelly bushing. us/m and kg/m³ (metric), us/ft and g/cm³ (imperial),
+  depths in feet, null values and decreasing depths are all handled.
+
+**`iwt vsp` on the demo VSP** (121 levels, 0.3 % noise). Intrinsic Q per block (true values in
+brackets), with the stratigraphic t\* from the logs:
+
+| driving the stratigraphic synthetic with | 450–600 m | 600–740 m | 740–800 m | 800–1650 m |
+|---|---|---|---|---|
+| the recorded first arrival (`iwt vsp`) | **45.5** (45.5) | **59.0** (58.8) | 120 (80) | **71.8** (70) |
+| the true source, a 40 Hz Ricker (WP3, WP7) | 45.8 | 60.1 | 123 | 72.0 |
+| a Ricker at the first arrivals' peak frequency (47 Hz) | 48.5 | 70.5 | 126 | 71.2 |
+
+- **Drive the stratigraphic synthetic with the recorded first arrival.** The stratigraphic t\*
+  depends on the spectrum that enters the layering. A Ricker fitted to the peak frequency (the
+  ghost raises it from 40 to 47 Hz) biases the middle block by 20 %. The recorded downgoing
+  arrival at the top receiver beats even the true source wavelet: it already carries the ghost
+  and the attenuation above the array.
+- **The 60 m Fruholmen block stays unresolved** (as in WP3).
+
+**`iwt model`.** The gap velocity from the VSP is 2129 m/s (true 2067 m/s). The model's vertical
+times differ from the VSP by −0.77 ms on average (0.83 ms RMS). Two effects are left:
+
+- **The bias of the reference pick** (WP3);
+- **the scale effect:** a 0.5 m layered model gives the ray-theory time, which is faster than
+  the 30 Hz effective medium (Backus). The physical calibration of WP3 removes this with a 40 m
+  Backus average. The model keeps the fine layers, because the synthetics need them.
+
+**`iwt tie`.**
+
+| trace | wavelet | correlation (best) | shift | phase |
+|---|---|---|---|---|
+| VSP corridor stack | 30 Hz Ricker (the deconvolution target) | 0.944 (0.980) | +0.7 ms | +3° |
+| seismic trace (with Q) | 30 Hz Ricker, Q in the synthetic | 0.950 (0.990) | +1.5 ms | −4° |
+| seismic trace (with Q) | 30 Hz Ricker, no Q in the synthetic | 0.909 (0.947) | +0.2 ms | +16° |
+| seismic trace (with Q) | estimated over the window (in-sample) | 0.986 | −0.6 ms | −1° |
+
+- **Leaving the overburden Q out of the synthetic** of a trace that is not Q-compensated costs
+  0.04 in correlation. It also shows up as a 16° phase rotation, which the complex correlation
+  separates from the time shift.
+- **The estimated wavelet is fitted in the same window it is scored on,** so its correlation is
+  optimistic. Use it to diagnose the phase of the data; the Ricker tie is the fair test.
+  - The reflectivity is modelled only up to `--f-max` (100 Hz), where the wavelet has signal.
+  - The wavelet's tails are tapered: the noise at 5 % otherwise shows as 0.1-amplitude jitter.
+
+## Using real data
+
+The adapters exist so that the synthetic set can be replaced by recorded data. **Whether the
+Hanssen (7324/7-2) logs and VSPs are released has not been checked.** Released Norwegian well
+data are ordered through the Diskos portal; see the plan, assumption 4.
+
+1. **Logs (LAS 2.0).**
+   - The P and S slownesses and the density are found by mnemonic (`DTCO`, `DTC`, `DT`, …;
+     `DTSM`, `DTS`, …; `RHOB`, `RHOZ`, …), or named with `p_curve`, `s_curve` and
+     `rho_curve` in `read_las`.
+   - Depth comes from a TVDSS curve. Without one, it is MD minus the kelly-bushing elevation
+     (`--kb`, or the EKB/KB/EREF/EDF/APD header item), which is right only for a vertical well.
+     Deviated wells need a TVDSS curve: deviation surveys are not read.
+   - Set the tool frequencies (`--f-sonic-p`, `--f-sonic-s`): LAS files do not record them, and
+     the dispersion correction depends on them.
+2. **ZO-VSP (SEG-Y).**
+   - One trace per level, starting at the shot time. Use the vertical component, or the
+     component along the direct arrival: 3C rotation is not implemented.
+   - Receiver depth: by default the receiver group elevation (bytes 41–44, with the scalar in
+     bytes 69–70), read as a negative elevation below sea level. Contractors differ, so check
+     the textual header and set `--depth-field`, `--depth-sign` and `--depth-shift`.
+   - Source depth comes from bytes 49–52 and the offset from bytes 37–40, or from the options.
+   - Shot-to-shot source variation should be removed beforehand (near-field hydrophone); this
+     is not implemented.
+3. **Seismic trace (SEG-Y).** The trace at the well, in two-way time below sea level. The Ricker
+   tie assumes zero-phase data; use `--wavelet estimate` to see the actual phase.
+4. **Not covered by the command line:**
+   - walkaway VSP picking and inversion, and CMP-gather migration. The library functions
+     (`iwt.vsp.walkaway`, `iwt.imaging.migrate_cmp` with `read_gather`) take the data, but
+     walkaway first breaks and polarizations must be picked elsewhere;
+   - DLIS logs, deviated wells, 3D survey geometry, and SEG-Y with variable trace length or
+     more than 65535 samples.
+
+## The article's claims, tested on the synthetic well
+
+| Claim (Lewis et al., 2016) | Where | Finding here | WP |
+|---|---|---|---|
+| The tie is "largely achieved in terms of event timing and AVO/AVA response" | Fig. 2 | **Reproduced in timing, not in AVO.** The corridor stack ties at correlation 0.93 after the ZO-VSP calibration, and most of the gain comes from filling the blind interval above the logs. Both AVA criteria fail (rows below). | 3, 7 |
+| Sonic-to-seismic drift comes from dispersion and layering | text, Table 1 | **Reproduced.** The 11.9 ms drift drops to 0.1–0.3 ms RMS with the VSP intrinsic Q and a Backus average, without a fitted parameter. With the apparent Q the layering is counted twice. | 3 |
+| The ZO-VSP gives the overburden Q | Table 1 | **Reproduced for the intrinsic Q** after the stratigraphic correction: within 2–4 % in thick blocks. The apparent Q is biased, a 60 m block is not resolved, and the interval above the first receiver is unconstrained. | 3, 7, 8 |
+| Sonic γ, calibrated by the WA-VSP, gives ε and δ along the well | text, Table 1 | **Reproduced with caveats.** γ is within 0.014 per unit, if the mud slowness is right. The six-level calibration puts δ 0.035–0.04 too high in the shallow shales. The smoothed curve gives isotropic stringers shale anisotropy. | 4, 5, 7 |
+| The WA-VSP measures ε and δ at 640–860 m | Leaney & Hornby (2007) | **Reproduced.** ε is within 0.01 of the 40 m Backus truth at five of six levels, δ within 0.03. The polarizations halve the ε error. | 5 |
+| Anisotropic Q-PSDM ties best | Fig. 3 | **Ranking reproduced:** AVA misfit 0.014, against 0.16–0.24 for the isotropic images. Anisotropic PSDM without Q is much worse here (0.53) than the article's "OK". A Q 30 % too low overshoots the gradient by 58 %. | 6 |
+| Interbed multiples from the overburden contaminate the reservoir AVO | Fig. 4 | **Reproduced as elastic contamination:** 0.9–1.5 × the single-scattering response, growing with angle. P-wave interbed multiples alone are small, so an acoustic demultiple would not repair it. | 7 |
+| A field-wide rock-physics Vs in the reservoir matches the AVA better | Fig. 4 | **Not testable as a fact about Wisting, and shown to be risky.** The synthetic has no reservoir-Vs anomaly beyond dispersion. Correcting the dipole Vs for dispersion fits worse. A Vs fitted to the AVA (+3 %, the opposite sign) would absorb the overburden-Q error (posterior correlation +0.59). | 7 |
+| Reprocessing reveals a flat oil–water contact | Fig. 5 | **Only partly testable in 1D.** Anisotropy positions the fluid signal (a 17 m difference), but Q compensation barely sharpens it at zero offset. | 7 |
+
+**Critical assessment.** The plan's points (`docs/IMPLEMENTATION_PLAN.md`, section 6) stand. The
+work packages sharpened them as follows:
+
+1. **The loop needs explicit criteria.** With criteria fixed before tuning, the time tie passes
+   and both AVA criteria fail. "Largely achieved" is accurate for the tie, not for the AVO. The
+   discrepancy register (`docs/discrepancy_register.md`) makes the stopping rule auditable.
+2. **The AVA cannot choose between the article's explanations.**
+   - The identifiability study shows the reservoir AVA constrains density and the overburden Q,
+     not the reservoir Vs or δ.
+   - A reservoir Vs change is therefore an unsafe fix. It needs independent evidence, such as
+     dipole-dispersion analysis or walkaway shear arrivals.
+   - *Better:* a joint inversion of the VSP, the walkaway and the AVA, with explicit noise
+     models.
+3. **Every part of the model must have the same resolution.** The log velocities, the γ-based
+   anisotropy and the walkaway calibration live at different scales. Mixing them changes the
+   synthetic AVA by more than any single parameter does. *Better:* calibrate the intrinsic
+   γ → (ε, δ) relation through the Backus average of the log model at the walkaway scale, and
+   zero the anisotropy in stringers flagged by the logs.
+4. **The shallowest Q is not measured.** Between the seabed and the first VSP receiver it is
+   only assumed, and this alone leaves a 3 % amplitude error at a reservoir 250 m below the
+   seabed. *Better:* the t\* of the direct arrival against a recorded source signature, or the
+   seabed multiples.
+5. **The contamination is elastic.** *Better:* elastic model-based subtraction or elastic
+   inversion of the reservoir interval, then re-measure the AVO. Ideally this means elastic
+   VTI FWI of the walkaway VSP jointly with the surface data (plan, point 10).
+6. **There is no blind test.** *Better:* calibrate on one family of data and validate on
+   another (plan, section 5), and test the calibrated model at a second well, such as Wisting
+   Central 7324/8-1, if its data are released.
+
+## Errata and ambiguities in the article
+
+- "PGS, formally Schlumberger" should read "formerly".
+- "worfklow" (Conclusions) and "that that" (Results) are typos.
+- The abbreviations are inconsistent: "WAVSP" (Summary, Table 1) against "WA-VSP" (text).
+- The depth reference of the walkaway levels "640 and 860 m" (MD or TVD, which datum) is not
+  stated; this implementation assumes TVDSS (assumption 3).
+- **Table 1 is not independent.** Qp's *calibration* source (the surface seismic) is also one of
+  its *validation* sources (critical point 6).
+- **The tool frequencies, mud properties and Q values behind the sonic-to-seismic correction are
+  not reported.** The correction cannot be reproduced from the article alone; this
+  implementation's values are assumptions (section "The synthetic well").
+
 ## Assumptions
 
 1. **"LFP article" means Lewis et al. (2016)**, the only article in [`References/`](References/).
@@ -1088,6 +1288,17 @@ could not attribute. Every model version, discrepancy and acceptance criterion i
     averages of the true oil-section models. The isotropic variant uses the NMO velocity Vp0 √(1 + 2δ). The
     contact is scored by the fluid signal (oil image minus brine image, without the noise
     image), not by picking: a 2–22 m column at 30 Hz gives no separate contact event to pick.
+33. **File conventions** (WP8):
+    - depths are m TVDSS, positive down;
+    - without a TVDSS curve, TVDSS = MD − KB (vertical well);
+    - a VSP receiver depth is read by default as the negative of the receiver group elevation;
+    - SEG-Y traces start at the delay recording time, in whole milliseconds;
+    - seismic traces for the tie are in two-way time below sea level.
+34. **The sonic tool frequencies are not in LAS files.** The defaults (12 kHz monopole, 2 kHz
+    dipole) are assumptions, and the dispersion correction is only as good as these values.
+35. **The command line assumes a zero-offset VSP with a stable source.** It uses one trace per
+    level and straight-ray vertical times, and does not correct for shot-to-shot signature
+    variation.
 
 ## Notes found while implementing
 
@@ -1175,6 +1386,13 @@ could not attribute. Every model version, discrepancy and acceptance criterion i
   shale anisotropy; that error is harmless on smoothed velocities and severe on sharp ones.
 - **The physical Vs correction and the AVA-fitted Vs have opposite signs** on this well. A Vs
   tuned to the AVA would have absorbed the overburden Q error.
+- **The stratigraphic t\* depends on the wavelet driving the synthetic** (WP8). A Ricker at the
+  recorded peak frequency biased the intrinsic Q of a block by 20 %. The recorded downgoing
+  first arrival at the shallowest receiver gives the same reference spectrum as the data.
+- **A wavelet estimated over the tie window inflates the tie** (WP8). It is fitted and scored
+  on the same samples, so it diagnoses the phase but does not test the model.
+- **A misplaced Q block boundary biases the neighbouring block** (WP8 tests; the Q analogue of the WP3 note on velocity blocks).
+  Boundaries at 700 m instead of the true 650 m gave Q 92 instead of 80 below.
 
 ## Repository layout
 
@@ -1193,6 +1411,8 @@ iwt/
   welltie.py      wavelet estimation, phase rotation, tie metrics (correlation, shift, phase, PEP)
   workflow.py     model from logs; model versions, discrepancy register, acceptance criteria
   multiples.py    gathers with physics switched off step by step; relative RMS
+  io.py           SEG-Y (numpy, rev 1/2), LAS (lasio), CSV logs, models and time-depth tables
+  cli.py          the `iwt` command: demo, vsp, model, tie (also `python -m iwt`)
   plotting.py     well, anisotropy, AVO, gather, depth-profile and trace displays (matplotlib)
   modeling/
     elastic.py       VTI plane waves with constant Q: slownesses, eigenvectors, interface scattering
@@ -1203,6 +1423,7 @@ iwt/
     zovsp.py         picking, time-depth, interval velocity, separation, deconvolution, corridor stack
     attenuation.py   first-arrival spectra, spectral ratio, centroid shift, interval Q
     walkaway.py      synthetic walkaway, slowness-polarization measurement and inversion, checks
+    processing.py    the ZO-VSP chain in one call (times, velocities, intrinsic Q, corridor stack)
 examples/wp1_synthetic_well.py      prints the WP1 numbers and writes docs/figures/wp1_*.png
 examples/wp2_forward_modelling.py   AVO, normal-incidence check, multiples, ZO-VSP; docs/figures/wp2_*.png
 examples/wp3_zovsp.py               ZO-VSP processing, Q, drift calibration; docs/figures/wp3_*.png
@@ -1210,7 +1431,7 @@ examples/wp4_sonic_anisotropy.py    Stoneley dispersion, gamma processing ladder
 examples/wp5_walkaway.py            walkaway eps and delta, checks, gamma calibration; wp5_*.png
 examples/wp6_imaging.py             moveout, Q-compensated migration variants (Fig. 3), gain limit; wp6_*.png
 examples/reproduce_paper.py         the integrated loop (WP7); register, Figs. 2, 4, 5 analogues; wp7_*.png
-tests/            pytest suite (154 tests)
+tests/            pytest suite (168 tests)
 docs/             implementation plan, discrepancy register and figures
 References/       the article (PDF)
 ```
@@ -1223,9 +1444,11 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Alkhalifah, T., & Tsvankin, I. (1995). Velocity analysis for transversely isotropic media. *Geophysics*, 60(5), 1550–1566. https://doi.org/10.1190/1.1443888
 * Backus, G. E. (1962). Long-wave elastic anisotropy produced by horizontal layering. *Journal of Geophysical Research*, 67(11), 4427–4440. https://doi.org/10.1029/JZ067i011p04427
 * Banik, N. C., Lerche, I., & Shuey, R. T. (1985). Stratigraphic filtering, Part I: Derivation of the O'Doherty–Anstey formula. *Geophysics*, 50(12), 2768–2774. https://doi.org/10.1190/1.1441897
+* Barry, K. M., Cavers, D. A., & Kneale, C. W. (1975). Recommended standards for digital tape formats. *Geophysics*, 40(2), 344–352. (SEG-Y revision 0)
 * Berryman, J. G., Grechka, V., & Berge, P. A. (1999). Analysis of Thomsen parameters for finely layered VTI media. *Geophysical Prospecting*, 47(6), 959–978. https://doi.org/10.1046/j.1365-2478.1999.00163.x
 * Biot, M. A. (1952). Propagation of elastic waves in a cylindrical bore containing a fluid. *Journal of Applied Physics*, 23(9), 997–1005. https://doi.org/10.1063/1.1702365
 * Cavalca, M., Fletcher, R., & Riedel, M. (2013). Q-compensation in complex media—Ray-based and wavefield extrapolation approaches. *SEG Technical Program Expanded Abstracts 2013*, 3831–3835. https://doi.org/10.1190/segam2013-1130.1
+* Canadian Well Logging Society. *LAS Version 2.0: A digital standard for logs* (1992; updated 2014). https://www.cwls.org
 * Cheng, C. H., & Toksöz, M. N. (1981). Elastic wave propagation in a fluid-filled borehole and synthetic acoustic logs. *Geophysics*, 46(7), 1042–1053. https://doi.org/10.1190/1.1441242
 * Fryer, G. J., & Frazer, L. N. (1984). Seismic waves in stratified anisotropic media. *Geophysical Journal International*, 78(3), 691–710. https://doi.org/10.1111/j.1365-246X.1984.tb05065.x
 * Gaiser, J. E. (1990). Transversely isotropic phase velocity analysis from slowness estimates. *Journal of Geophysical Research*, 95(B7), 11241–11254. https://doi.org/10.1029/JB095iB07p11241
@@ -1233,6 +1456,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Goetz, J. F., Dupal, L., & Bowler, J. (1979). An investigation into discrepancies between sonic log and seismic check shot velocities. *APEA Journal*, 19(1), 131–141. https://doi.org/10.1071/AJ78014
 * Grechka, V., & Mateeva, A. (2007). Inversion of P-wave VSP data for local anisotropy: Theory and case study. *Geophysics*, 72(4), D69–D79. https://doi.org/10.1190/1.2742970
 * Grechka, V., Tsvankin, I., & Contreras, P. (2024). Inversion of walkaway VSP data in the presence of lateral velocity heterogeneity. *Energy Geoscience*, 5(2), 100255. https://doi.org/10.1016/j.engeos.2023.100255
+* Hagelund, R., & Levin, S. A. (Eds.) (2017). *SEG-Y_r2.0: SEG-Y revision 2.0 Data Exchange format*. SEG Technical Standards Committee.
 * Hardage, B. A. (1985). *Vertical Seismic Profiling, Part A: Principles* (2nd ed.). Geophysical Press.
 * Hauge, P. S. (1981). Measurements of attenuation from vertical seismic profiles. *Geophysics*, 46(11), 1548–1558. https://doi.org/10.1190/1.1441161
 * Hinds, R. C., Anderson, N. L., & Kuzmiski, R. D. (1996). *VSP Interpretive Processing: Theory and Practice*. SEG. https://doi.org/10.1190/1.9781560801894
@@ -1248,6 +1472,7 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * Molyneux, J. B., & Schmitt, D. R. (1999). First-break timing: Arrival onset times by direct correlation. *Geophysics*, 64(5), 1492–1501. https://doi.org/10.1190/1.1444653
 * Norris, A. N. (1990). The speed of a tube wave. *Journal of the Acoustical Society of America*, 87(1), 414–417. https://doi.org/10.1121/1.399262
 * Norris, A. N., & Sinha, B. K. (1993). Weak elastic anisotropy and the tube wave. *Geophysics*, 58(8), 1091–1098. https://doi.org/10.1190/1.1443493
+* Norris, M. W., & Faichney, A. K. (Eds.) (2002). *SEG Y rev 1 Data Exchange format*. SEG Technical Standards Committee.
 * O'Doherty, R. F., & Anstey, N. A. (1971). Reflections on amplitudes. *Geophysical Prospecting*, 19(3), 430–458. https://doi.org/10.1111/j.1365-2478.1971.tb00610.x
 * Quan, Y., & Harris, J. M. (1997). Seismic attenuation tomography using the frequency shift method. *Geophysics*, 62(3), 895–905. https://doi.org/10.1190/1.1444197
 * Richards, P. G., & Menke, W. (1983). The apparent attenuation of a scattering medium. *Bulletin of the Seismological Society of America*, 73(4), 1005–1021. https://doi.org/10.1785/BSSA0730041005
@@ -1270,4 +1495,4 @@ Run the tests with `pytest`. The plotting tests are skipped when matplotlib is m
 * OMV (2014). OMV finds hydrocarbons at Hanssen well in Norway (press release). https://www.omv.com/en/media/press-releases/2014/omv-finds-hydrocarbons-at-hanssen-well-in-norway
 * Sokkeldirektoratet. Wellbore 7324/7-2 factpage. https://factpages.sodir.no/en/wellbore/pageview/exploration/all/7450
 
-DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The WP6 references (Alkhalifah & Tsvankin, 1995; Wang, 2002; Cavalca et al., 2013) and the WP7 references (Walden & White, 1998; White & Simm, 2003; O'Doherty & Anstey, 1971; Kjartansson, 1979) are those of the plan, checked there by DOI. The plan lists further references for WP8.
+DOIs were checked against the Scite index; the WP3 and WP4 references were also checked against publisher records (the White & Simm page range could not be confirmed and is omitted). The exact tool-term notation of Norris (1990) could not be checked against its full text; the form used here was derived from the annulus compliance. The WP5 references Grechka & Mateeva (2007) and Grechka et al. (2024) were checked against the Scite index; Gaiser (1990), Miller & Spencer (1994) and Tsvankin (2012) by their DOIs. The WP6 references (Alkhalifah & Tsvankin, 1995; Wang, 2002; Cavalca et al., 2013) and the WP7 references (Walden & White, 1998; White & Simm, 2003; O'Doherty & Anstey, 1971; Kjartansson, 1979) are those of the plan, checked there by DOI. The WP8 format standards were checked by web search (the Scite quota was spent): the Barry et al. (1975) citation is confirmed, but its DOI was not, so none is given; the SEG-Y revision 1 (May 2002) and 2.0 (2017) editors and dates were confirmed from copies of the documents and the SEG release; the LAS 2.0 history (1992 release, CWLS) was confirmed from the USGS and the UK National Archives format registries. The SEG-Y byte positions used in `iwt.io` were checked against segyio's field tables, and the test suite checks the reader and writer against segyio in both directions.
