@@ -34,7 +34,8 @@ import numpy as np
 from ..model import phase_velocities, thomsen_to_cij
 from .elastic import eigenvectors, interface_scattering, vertical_slowness
 
-__all__ = ["zoeppritz_pp", "exact_pp", "aki_richards", "shuey", "ruger", "slowness_from_angle"]
+__all__ = ["zoeppritz_pp", "exact_pp", "exact_pp_slowness", "aki_richards", "shuey", "ruger",
+           "slowness_from_angle"]
 
 
 def zoeppritz_pp(theta, vp1, vs1, rho1, vp2, vs2, rho2):
@@ -70,7 +71,18 @@ def exact_pp(theta, upper, lower):
     the phase angle of the incident qP wave.  Both media must be solids.
     """
     theta = np.atleast_1d(np.asarray(theta, dtype=float))
-    p = slowness_from_angle(theta, upper[0], upper[1], upper[3], upper[4]) + 0j
+    return exact_pp_slowness(slowness_from_angle(theta, upper[0], upper[1], upper[3], upper[4]),
+                             upper, lower)
+
+
+def exact_pp_slowness(p, upper, lower):
+    """:func:`exact_pp` as a function of the horizontal slowness ``p`` (s/m).
+
+    Beyond the critical slowness of either medium the coefficient is complex
+    (``exp(-i omega t)`` convention); beyond the upper medium's own horizontal
+    slowness the incident wave is evanescent and the value is formal.
+    """
+    p = np.atleast_1d(np.asarray(p, dtype=float)) + 0j
     Ds = []
     for vp0, vs0, rho, eps, delta in (upper, lower):
         c = thomsen_to_cij(vp0, vs0, rho, eps, delta, 0.0)
