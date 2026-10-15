@@ -1,6 +1,6 @@
 # Implementation plan: integrated borehole and surface seismic well tie (Lewis et al., 2016)
 
-Status: **WP1–WP7 implemented** (see the README); WP8 to do. This document says what will be built, in what
+Status: **WP1–WP8 implemented** (see the README). This document says what will be built, in what
 order, how each part will be checked, and where the method can be improved. It follows the
 conventions of the earlier repositories in this series (for example `ES_PHYS_P010`): a Python
 package, a `paper.py` that records where each published number comes from, figures redrawn on
@@ -433,7 +433,23 @@ loop (logs → ZO-VSP → walkaway → surface seismic) on estimated models only
 - the decision;
 - the model version it changed.
 
-### WP8: Real data, CLI and documentation
+### WP8: Real data, CLI and documentation (done)
+
+*As built:* `iwt.io`, `iwt.vsp.processing`, `iwt.cli` (`iwt demo`, `iwt vsp`, `iwt model`,
+`iwt tie`; also `python -m iwt`), and the README sections on the command line, real data, the
+article's claims, the critical assessment and the errata. Changes from the plan:
+
+- **SEG-Y is read and written by a small numpy implementation, not segyio.** That keeps the
+  core free of compiled dependencies. segyio is a test-only dependency: the suite checks the
+  reader and writer against it in both directions.
+- **The stratigraphic t\* is computed with the recorded first arrival** as the source wavelet,
+  not a Ricker. A peak-frequency Ricker biased the intrinsic Q of the middle block by 20 %.
+- **`iwt demo` writes the synthetic well as files,** so the whole command-line chain is tested
+  end to end on the formats real data come in.
+- **Not built:** DLIS, deviation surveys (TVDSS must be in the LAS file), 3C rotation, walkaway
+  picking, and command-line access to walkaway inversion and CMP migration (they remain library
+  functions).
+
 
 **Builds:**
 
@@ -527,13 +543,15 @@ synthetic AVA and on the tie.
 - The depth reference for "640 and 860 m" is not stated (see assumption 4).
 - In Table 1, Qp's *calibration* source (surface seismic) is also one of its *validation*
   sources, so the validation is not independent. This supports critical-assessment point 1.
+- The tool frequencies, mud properties and Q values behind the sonic-to-seismic correction are
+  not reported, so the correction cannot be reproduced from the article alone (found in WP8).
 
 ## 8. Open decisions
 
 These are the user's decisions. The defaults in brackets apply if no answer comes:
 
 1. **Real data.** Is there access to the Hanssen (7324/7-2) logs and VSPs, or another released
-   Wisting well? [synthetic only; adapters in WP8]
+   Wisting well? [synthetic only; the WP8 adapters and the `iwt` command are ready for them]
 2. **2D elastic FD.** Build it as a cross-check, or rely on the reflectivity method alone?
    [reflectivity; FD optional in WP2]
 3. **Package name.** [`iwt`]
